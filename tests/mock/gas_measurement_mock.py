@@ -1,5 +1,4 @@
 import math
-import random
 import time
 from datetime import datetime
 
@@ -14,27 +13,31 @@ class GasMeasurementMock(MeasurementMock):
 
     def _measurement_routine(self) -> None:
         while not self._stop.is_set():
-            elapsed_time = time.time() - self.start_time
+            elapsed = time.time() - self.start_time
+            now = datetime.now()
 
-            measurement = GasMeasurement(
-                datetime=datetime.now(),
-                type="CH4",
-                concentration=math.sin(math.radians(3 * elapsed_time)) + 3,
-                unit="ppm")
-            self._post_measurement(measurement, '/measurement/gas', )
+            no_val = 80.0 * math.sin(math.radians(3 * elapsed)) + 90.0
+            no2_val = 25.0 * math.sin(math.radians(4 * elapsed)) + 30.0
 
-            measurement = GasMeasurement(
-                datetime=datetime.now(),
-                type="CO2",
-                concentration=300.0 * math.sin(math.radians(4 * elapsed_time)) + 700.0,
-                unit="ppm")
-            self._post_measurement(measurement, '/measurement/gas', )
+            samples = [
+                ("NO", no_val, "ppb"),
+                ("NO2", no2_val, "ppb"),
+                ("NOx", no_val + no2_val, "ppb"),
+                ("O3", 40.0 * math.sin(math.radians(2 * elapsed)) + 55.0, "ppb"),
+                ("CO", 1.0 * math.sin(math.radians(3 * elapsed)) + 1.2, "ppm"),
+                ("PM10", 30.0 * math.sin(math.radians(2 * elapsed)) + 40.0, "ug/m3"),
+                ("PM4", 18.0 * math.sin(math.radians(2 * elapsed)) + 24.0, "ug/m3"),
+                ("PM2.5", 15.0 * math.sin(math.radians(2 * elapsed)) + 19.0, "ug/m3"),
+                ("PM1", 10.0 * math.sin(math.radians(2 * elapsed)) + 13.0, "ug/m3"),
+            ]
 
-            measurement = GasMeasurement(
-                datetime=datetime.now(),
-                type="H2O",
-                concentration=50.0 * math.sin(math.radians(4 * elapsed_time)) + 50.0,
-                unit="ppm")
-            self._post_measurement(measurement, '/measurement/gas', )
+            for gas_type, concentration, unit in samples:
+                measurement = GasMeasurement(
+                    datetime=now,
+                    type=gas_type,
+                    concentration=concentration,
+                    unit=unit,
+                )
+                self._post_measurement(measurement, '/measurement/gas')
 
-            time.sleep(random.randint(4500, 5500) / 1000)
+            time.sleep(1.0)
