@@ -37,8 +37,13 @@ export class MeasurementPlotter {
 
             try {
                 await this.update();
-                this.currentInterval = this.baseInterval; // Reset interval on success
+                // Finished campaigns should fetch all remaining batches immediately without waiting
+                this.currentInterval = this.end_datetime !== null ? 0 : this.baseInterval;
             } catch (error) {
+                if (this.end_datetime !== null) {
+                    this.stopPlotting();
+                    return;
+                }
                 this.currentInterval = Math.min(this.currentInterval * 2, this.maxInterval); // Exponential backoff
                 console.error('No new "' + this.url_endpoint_type + '" data available. Next poll in ' + this.currentInterval/1000 + 's');
             }

@@ -88,13 +88,15 @@ def _nearest_location(t: datetime.datetime, loc_times: List[datetime.datetime],
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    app.config['ACCEPT_MEASUREMENT_DATA'] = False
+    app.config['ACCEPT_MEASUREMENT_DATA'] = True
     app.config["SQLALCHEMY_DATABASE_URI"] = get_db_config()
     db.init_app(app)
 
     @app.post("/measurement/<measurement_type>")
     @timeit
     def post_measurement(measurement_type: str):
+        if measurement_type != "log" and not app.config.get("ACCEPT_MEASUREMENT_DATA", True):
+            return {"paused": True, "message": "Measurement recording is paused"}, 200
         if request.is_json:
             try:
                 measurement = measurement_type_look_up[measurement_type].create_from_json(request.get_json())
@@ -168,19 +170,50 @@ def create_app() -> Flask:
         show_campaign = db.session.execute(db.select(Campaign).where(Campaign.id == campaign_id)).scalar()
         if not show_campaign:
             return redirect('/campaign')
-        return render_template('index.html', campaign=show_campaign)
+        end_dt = show_campaign.end or datetime.datetime.now()
+        min_dt, max_dt = db.session.execute(
+            db.select(db.func.min(GasMeasurement.datetime), db.func.max(GasMeasurement.datetime))
+            .where(GasMeasurement.datetime >= show_campaign.start)
+            .where(GasMeasurement.datetime <= end_dt)
+        ).one()
+        data_span = (max_dt - min_dt).total_seconds() if (min_dt and max_dt) else 0.0
+        available_species = db.session.execute(
+            db.select(GasMeasurement.type)
+            .where(GasMeasurement.datetime >= show_campaign.start)
+            .where(GasMeasurement.datetime <= end_dt)
+            .distinct()
+        ).scalars().all()
+        return render_template(
+            'index.html',
+            campaign=show_campaign,
+            short_data=(data_span < 120.0),
+            available_species=available_species,
+        )
 
     @app.route('/campaign',  methods=['POST', 'GET'])
     def campaign():
         if request.method == 'GET':
+            now = datetime.datetime.now()
             campaigns = db.session.execute(
                 db.select(Campaign)
                 .order_by(Campaign.start.desc())
             ).scalars().all()
+            short_campaigns = set()
+            for c in campaigns:
+                end_dt = c.end or now
+                min_dt, max_dt = db.session.execute(
+                    db.select(db.func.min(GasMeasurement.datetime), db.func.max(GasMeasurement.datetime))
+                    .where(GasMeasurement.datetime >= c.start)
+                    .where(GasMeasurement.datetime <= end_dt)
+                ).one()
+                span = (max_dt - min_dt).total_seconds() if (min_dt and max_dt) else 0.0
+                if span < 120.0:
+                    short_campaigns.add(c.id)
             return render_template(
                 'campaigns.html',
                 campaigns=campaigns,
-                now=datetime.datetime.now(),
+                short_campaigns=short_campaigns,
+                now=now,
                 enable_measurements=app.config["ACCEPT_MEASUREMENT_DATA"])
         else:
             campaign_id = int(request.form.get('id') or 0)
@@ -502,6 +535,10 @@ def create_app() -> Flask:
 
     with app.app_context():
         db.create_all()
+        for tbl in ('gas_measurement', 'location_measurement', 'wind_measurement'):
+            db.session.execute(db.text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_datetime ON {tbl} (datetime)"))
+        db.session.execute(db.text("CREATE INDEX IF NOT EXISTS ix_gas_measurement_type_datetime ON gas_measurement (type, datetime)"))
+        db.session.commit()
 
     return app
 

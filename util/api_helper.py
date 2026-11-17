@@ -7,7 +7,7 @@ from models.base_model import db
 
 
 class Request:
-    DEFAULT_LIMIT = 200
+    DEFAULT_LIMIT = 2000
     DEFAULT_GAS_TYPE = "NO"
 
     def __init__(self, args: MultiDict[str, str]):

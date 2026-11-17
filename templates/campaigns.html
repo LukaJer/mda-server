@@ -288,6 +288,17 @@
             background: #dcfce7;
             color: #15803d;
         }
+        .badge-warn {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #fde68a;
+            margin-left: 6px;
+        }
         @media (max-width: 600px) {
             .sensor-tile.wide { grid-column: span 1; }
         }
@@ -308,13 +319,24 @@
         <!-- Active Campaign Banner (if any campaign has no end time) -->
         {% set active_campaigns = campaigns | selectattr('end', 'none') | list %}
         {% for ac in active_campaigns %}
-        <div class="card active-banner">
+        <div class="card active-banner" {% if not enable_measurements %}style="border-color: rgba(217, 119, 6, 0.55); background: linear-gradient(135deg, rgba(217, 119, 6, 0.08), var(--surface));"{% endif %}>
             <div class="active-info">
-                <h3><span class="dot live"></span> Active: {{ ac.name or ('Campaign #' ~ ac.id) }}</h3>
+                <h3>
+                    <span class="dot {{ 'live' if enable_measurements else 'stale' }}"></span>
+                    Active: {{ ac.name or ('Campaign #' ~ ac.id) }}
+                    {% if not enable_measurements %}
+                        <span class="badge-warn">PAUSED</span>
+                    {% endif %}
+                </h3>
                 <p>Started {{ ac.start.strftime('%Y-%m-%d %H:%M:%S') }}{% if ac.author %} &middot; {{ ac.author }}{% endif %}{% if ac.description %} &middot; {{ ac.description }}{% endif %}</p>
             </div>
             <div class="actions-cell">
                 <a class="btn btn-primary" href="/map/{{ ac.id }}">Open Live Map</a>
+                {% if enable_measurements %}
+                    <a class="btn btn-ghost" href="/enable-measurements/0">Pause Recording</a>
+                {% else %}
+                    <a class="btn btn-success" href="/enable-measurements/1">Resume Recording</a>
+                {% endif %}
                 <a class="btn btn-ghost" href="/campaign/{{ ac.id }}/download?format=json">JSON</a>
                 <a class="btn btn-ghost" href="/campaign/{{ ac.id }}/download?format=csv">CSV</a>
                 <form action="/campaign/{{ ac.id }}/stop" method="post" style="margin:0;">
@@ -409,7 +431,12 @@
                     <tbody>
                         {% for campaign in campaigns %}
                         <tr>
-                            <td><strong>{{ campaign.name or ('Campaign #' ~ campaign.id) }}</strong></td>
+                            <td>
+                                <strong>{{ campaign.name or ('Campaign #' ~ campaign.id) }}</strong>
+                                {% if campaign.id in short_campaigns %}
+                                    <span class="badge-warn" title="Campaign has less than 120 seconds of recorded data">&#9888; &lt; 120s data</span>
+                                {% endif %}
+                            </td>
                             <td>{{ campaign.start.strftime('%Y-%m-%d %H:%M') }}</td>
                             <td>
                                 {% if campaign.end %}
@@ -446,15 +473,15 @@
     </div>
 
     <script>
-        const POLL_INTERVAL_MS = 1500;
         const SENSOR_THRESHOLDS = {
-            AC32e:    { staleAfter: 15, offlineAfter: 120 },
-            O342e:    { staleAfter: 15, offlineAfter: 120 },
-            CO12e:    { staleAfter: 15, offlineAfter: 120 },
-            Grimm11D: { staleAfter: 25, offlineAfter: 120 },
-            GPS:      { staleAfter: 15, offlineAfter: 120 },
-            Wind:     { staleAfter: 15, offlineAfter: 120 },
+            AC32e:    { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
+            O342e:    { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
+            CO12e:    { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
+            Grimm11D: { intervalMs: 6000, staleAfter: 25, offlineAfter: 120 },
+            GPS:      { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
+            Wind:     { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
         };
+        const IDLE_POLL_MS = 5000;
 
         const INSTRUMENTS = [
             { name: "Nitrous Oxides", sensor: "AC32e", subtitle: "Envea AC32e", species: ["NO", "NO2", "NOx"] },
@@ -472,27 +499,27 @@
             const hasRecentLog = logAge !== null && logAge !== undefined && logAge <= offlineAfter;
 
             if (!hasRecentData && !hasRecentLog) {
-                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
             }
             if (!logEntry || !logEntry.description) {
-                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok' };
-                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn' };
-                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok', active: true };
+                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn', active: true };
+                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
             }
 
             const desc = logEntry.description;
             if (desc === 'Unconnected') {
-                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
             }
             if (desc.startsWith('ERROR')) {
-                return { text: desc, dotClass: 'offline', lineClass: 'err' };
+                return { text: desc, dotClass: 'offline', lineClass: 'err', active: true };
             }
             if (desc === 'OK') {
-                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok' };
-                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn' };
-                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok', active: true };
+                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn', active: true };
+                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
             }
-            return { text: desc, dotClass: 'stale', lineClass: 'warn' };
+            return { text: desc, dotClass: 'stale', lineClass: 'warn', active: true };
         }
 
         function formatAge(ageSeconds) {
@@ -508,57 +535,46 @@
             return Math.abs(val) >= 100 ? val.toFixed(1) : val.toFixed(2);
         }
 
-        function renderGasInstrumentCard(title, sensor, subtitle, speciesList, gas, logEntry) {
-            const ages = speciesList
-                .map(sp => gas[sp] ? gas[sp].age_seconds : null)
-                .filter(a => a !== null && a !== undefined);
-            const minAge = ages.length ? Math.min(...ages) : null;
-
-            const channelsHtml = speciesList.map(sp => {
-                const entry = gas[sp];
-                const val = entry ? formatVal(entry.concentration) : '--';
-                const unit = entry ? entry.unit : '';
-                return `
-                    <div class="channel-item">
-                        <div class="channel-label">${sp}</div>
-                        <div class="sensor-val">${val}<span class="sensor-unit">${unit}</span></div>
-                    </div>
-                `;
-            }).join('');
-
-            const st = resolveStatus(sensor, logEntry, minAge);
-            return `
-                <div class="instrument-card">
-                    <div class="instrument-header">
-                        <div>
-                            <div class="instrument-title">${title}</div>
-                            <div class="instrument-sub">${subtitle}</div>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <span class="sensor-meta">${formatAge(minAge)}</span>
-                            <span class="dot ${st.dotClass}"></span>
-                        </div>
-                    </div>
-                    <div class="channels-grid">${channelsHtml}</div>
-                    <div class="status-line ${st.lineClass}">Status: ${st.text}</div>
-                </div>
-            `;
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (el && el.textContent !== value) el.textContent = value;
         }
 
-        function renderTelemetry(data) {
+        function setClass(id, value) {
+            const el = document.getElementById(id);
+            if (el && el.className !== value) el.className = value;
+        }
+
+        function buildTelemetryCards() {
             const grid = document.getElementById('telemetry-grid');
             const cards = [];
-            const gas = data.gas || {};
-            const logs = data.logs || {};
 
             for (const inst of INSTRUMENTS) {
-                cards.push(renderGasInstrumentCard(inst.name, inst.sensor, inst.subtitle, inst.species, gas, logs[inst.sensor]));
+                const channelsHtml = inst.species.map(sp => `
+                    <div class="channel-item">
+                        <div class="channel-label">${sp}</div>
+                        <div class="sensor-val"><span id="val-${sp}">--</span><span class="sensor-unit" id="unit-${sp}"></span></div>
+                    </div>
+                `).join('');
+
+                cards.push(`
+                    <div class="instrument-card">
+                        <div class="instrument-header">
+                            <div>
+                                <div class="instrument-title">${inst.name}</div>
+                                <div class="instrument-sub">${inst.subtitle}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="sensor-meta" id="age-${inst.sensor}">No data</span>
+                                <span class="dot" id="dot-${inst.sensor}"></span>
+                            </div>
+                        </div>
+                        <div class="channels-grid">${channelsHtml}</div>
+                        <div class="status-line" id="status-${inst.sensor}">Status: Unconnected</div>
+                    </div>
+                `);
             }
 
-            // GPS instrument card
-            const loc = data.location;
-            const locAge = loc ? loc.age_seconds : null;
-            const gpsSt = resolveStatus('GPS', logs['GPS'], locAge);
             cards.push(`
                 <div class="instrument-card">
                     <div class="instrument-header">
@@ -567,32 +583,24 @@
                             <div class="instrument-sub">Position &amp; Speed (NMEA)</div>
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
-                            <span class="sensor-meta">${formatAge(locAge)}</span>
-                            <span class="dot ${gpsSt.dotClass}"></span>
+                            <span class="sensor-meta" id="age-GPS">No data</span>
+                            <span class="dot" id="dot-GPS"></span>
                         </div>
                     </div>
                     <div class="channels-grid">
                         <div class="channel-item">
                             <div class="channel-label">Coordinates</div>
-                            <div class="sensor-val" style="font-size:0.95rem;">
-                                ${loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix'}
-                            </div>
+                            <div class="sensor-val" style="font-size:0.95rem;" id="gps-coords">No fix</div>
                         </div>
                         <div class="channel-item">
                             <div class="channel-label">Speed / Hdg</div>
-                            <div class="sensor-val" style="font-size:0.95rem;">
-                                ${loc ? `${(loc.speed * 3.6).toFixed(1)} km/h &middot; ${loc.heading.toFixed(0)}&deg;` : '--'}
-                            </div>
+                            <div class="sensor-val" style="font-size:0.95rem;" id="gps-speed">--</div>
                         </div>
                     </div>
-                    <div class="status-line ${gpsSt.lineClass}">Status: ${gpsSt.text}</div>
+                    <div class="status-line" id="status-GPS">Status: Unconnected</div>
                 </div>
             `);
 
-            // Wind instrument card
-            const wind = data.wind;
-            const windAge = wind ? wind.age_seconds : null;
-            const windSt = resolveStatus('Wind', logs['Wind'], windAge);
             cards.push(`
                 <div class="instrument-card">
                     <div class="instrument-header">
@@ -601,49 +609,119 @@
                             <div class="instrument-sub">Wind Speed &amp; Direction (UMB)</div>
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
-                            <span class="sensor-meta">${formatAge(windAge)}</span>
-                            <span class="dot ${windSt.dotClass}"></span>
+                            <span class="sensor-meta" id="age-Wind">No data</span>
+                            <span class="dot" id="dot-Wind"></span>
                         </div>
                     </div>
                     <div class="channels-grid">
                         <div class="channel-item">
                             <div class="channel-label">Speed</div>
-                            <div class="sensor-val">${wind ? wind.speed.toFixed(1) : '--'}<span class="sensor-unit">m/s</span></div>
+                            <div class="sensor-val"><span id="wind-speed">--</span><span class="sensor-unit">m/s</span></div>
                         </div>
                         <div class="channel-item">
                             <div class="channel-label">Direction</div>
-                            <div class="sensor-val">${wind ? wind.heading.toFixed(0) : '--'}<span class="sensor-unit">&deg;</span></div>
+                            <div class="sensor-val"><span id="wind-dir">--</span><span class="sensor-unit">&deg;</span></div>
                         </div>
                     </div>
-                    <div class="status-line ${windSt.lineClass}">Status: ${windSt.text}</div>
+                    <div class="status-line" id="status-Wind">Status: Unconnected</div>
                 </div>
             `);
 
             grid.innerHTML = cards.join('');
         }
 
+        function applySensorStatus(sensor, logEntry, ageSeconds) {
+            const st = resolveStatus(sensor, logEntry, ageSeconds);
+            setText(`age-${sensor}`, formatAge(ageSeconds));
+            setClass(`dot-${sensor}`, `dot ${st.dotClass}`.trim());
+            setText(`status-${sensor}`, `Status: ${st.text}`);
+            setClass(`status-${sensor}`, `status-line ${st.lineClass}`.trim());
+            return st.active ? (SENSOR_THRESHOLDS[sensor]?.intervalMs || 1500) : null;
+        }
+
+        function updateTelemetry(data) {
+            const gas = data.gas || {};
+            const logs = data.logs || {};
+            let fastestActiveMs = null;
+
+            for (const inst of INSTRUMENTS) {
+                const ages = [];
+                for (const sp of inst.species) {
+                    const entry = gas[sp];
+                    if (entry) {
+                        ages.push(entry.age_seconds);
+                        setText(`val-${sp}`, formatVal(entry.concentration));
+                        setText(`unit-${sp}`, entry.unit || '');
+                    } else {
+                        setText(`val-${sp}`, '--');
+                        setText(`unit-${sp}`, '');
+                    }
+                }
+                const minAge = ages.length ? Math.min(...ages) : null;
+                const ms = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
+                if (ms !== null && (fastestActiveMs === null || ms < fastestActiveMs)) {
+                    fastestActiveMs = ms;
+                }
+            }
+
+            const loc = data.location;
+            const locAge = loc ? loc.age_seconds : null;
+            setText('gps-coords', loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
+            setText('gps-speed', loc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
+            const gpsMs = applySensorStatus('GPS', logs['GPS'], locAge);
+            if (gpsMs !== null && (fastestActiveMs === null || gpsMs < fastestActiveMs)) {
+                fastestActiveMs = gpsMs;
+            }
+
+            const wind = data.wind;
+            const windAge = wind ? wind.age_seconds : null;
+            setText('wind-speed', wind ? wind.speed.toFixed(1) : '--');
+            setText('wind-dir', wind ? wind.heading.toFixed(0) : '--');
+            const windMs = applySensorStatus('Wind', logs['Wind'], windAge);
+            if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
+                fastestActiveMs = windMs;
+            }
+
+            // Cap slow-only mode at 3s so status transitions remain snappy
+            return fastestActiveMs !== null ? Math.min(fastestActiveMs, 3000) : IDLE_POLL_MS;
+        }
+
+        let pollTimer = null;
+
         async function pollLive() {
+            if (document.hidden) return;
             const dot = document.getElementById('poll-dot');
             const status = document.getElementById('poll-status');
             const updated = document.getElementById('last-updated');
+            let nextMs = IDLE_POLL_MS;
+
             try {
                 const resp = await fetch('/api/live');
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
-                renderTelemetry(data);
+                nextMs = updateTelemetry(data);
                 dot.className = 'dot live';
                 status.textContent = 'Server Online';
-                updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+                updated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour12: false })}`;
             } catch (err) {
                 dot.className = 'dot offline';
                 status.textContent = 'Server Unreachable';
             } finally {
-                setTimeout(pollLive, POLL_INTERVAL_MS);
+                clearTimeout(pollTimer);
+                if (!document.hidden) {
+                    pollTimer = setTimeout(pollLive, nextMs);
+                }
             }
         }
 
-        // Always render instrument boxes immediately on page load
-        renderTelemetry({});
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                clearTimeout(pollTimer);
+                pollLive();
+            }
+        });
+
+        buildTelemetryCards();
         pollLive();
     </script>
 </body>

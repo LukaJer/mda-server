@@ -71,9 +71,9 @@ async function main() {
     var map = L.map('map', map_options).setView([map_view_lat, map_view_long], 16);
     map.attributionControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors');
 
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19});
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
     const osm_local = L.tileLayer('/static/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 19});
-    const osm_local_grayscale = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+    const osm_local_grayscale = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19});
 
     const tile_layers = {
         "OSM": osm,
