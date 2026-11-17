@@ -1,9 +1,14 @@
+import bisect
+import csv
 import datetime
+import io
+import json
+import re
 from configparser import ConfigParser
 from functools import wraps
 from typing import List
 
-from flask import Flask, request, jsonify, render_template, redirect, send_file
+from flask import Flask, Response, request, jsonify, render_template, redirect, send_file
 import numpy as np
 
 from models.average_wind_measurement_with_location import AverageWindMeasurementWithLocation
@@ -62,6 +67,23 @@ def get_db_config():
     else:
         db_uri = f'sqlite:///{db_location}'
     return db_uri
+
+
+def _nearest_location(t: datetime.datetime, loc_times: List[datetime.datetime],
+                      locs: List[LocationMeasurement], max_seconds: float = 15.0):
+    """Return the nearest LocationMeasurement within max_seconds of t, or None."""
+    if not loc_times:
+        return None
+    i = bisect.bisect_left(loc_times, t)
+    best, best_dt = None, None
+    for j in (i - 1, i):
+        if 0 <= j < len(loc_times):
+            delta = abs((loc_times[j] - t).total_seconds())
+            if best_dt is None or delta < best_dt:
+                best_dt, best = delta, locs[j]
+    if best is not None and best_dt is not None and best_dt <= max_seconds:
+        return best
+    return None
 
 
 def create_app() -> Flask:
@@ -161,7 +183,7 @@ def create_app() -> Flask:
                 now=datetime.datetime.now(),
                 enable_measurements=app.config["ACCEPT_MEASUREMENT_DATA"])
         else:
-            campaign_id = int(request.form.get('id', 0))
+            campaign_id = int(request.form.get('id') or 0)
             start = datetime.datetime.fromisoformat(request.form['start'])
             end = ApiHelper.get_datetime_if_set(request.form['end'])
             name = ApiHelper.get_post_if_set(request.form["name"])
@@ -190,6 +212,193 @@ def create_app() -> Flask:
                 db.session.commit()
 
             return redirect('/campaign')
+
+    @app.post('/campaign/start')
+    def campaign_start():
+        now = datetime.datetime.now().replace(microsecond=0)
+        name = ApiHelper.get_post_if_set(request.form.get('name')) or f"Campaign {now.strftime('%Y-%m-%d %H:%M')}"
+        author = ApiHelper.get_post_if_set(request.form.get('author'))
+        description = ApiHelper.get_post_if_set(request.form.get('description'))
+
+        new_campaign = Campaign(
+            start=now,
+            end=None,
+            name=name,
+            author=author,
+            description=description,
+        )
+        db.session.add(new_campaign)
+        db.session.commit()
+        return redirect('/campaign')
+
+    @app.post('/campaign/<int:campaign_id>/stop')
+    def campaign_stop(campaign_id: int):
+        active_campaign = db.session.execute(
+            db.select(Campaign).where(Campaign.id == campaign_id)
+        ).scalar()
+        if active_campaign and active_campaign.end is None:
+            active_campaign.end = datetime.datetime.now().replace(microsecond=0)
+            db.session.commit()
+        return redirect('/campaign')
+
+    @app.get('/api/live')
+    def api_live():
+        now = datetime.datetime.now()
+
+        latest_ids_subq = (
+            db.select(db.func.max(GasMeasurement.id).label('max_id'))
+            .group_by(GasMeasurement.type)
+            .subquery()
+        )
+        latest_gases = db.session.execute(
+            db.select(GasMeasurement)
+            .join(latest_ids_subq, GasMeasurement.id == latest_ids_subq.c.max_id)
+        ).scalars().all()
+
+        gas_data = {
+            g.type: {
+                "concentration": g.concentration,
+                "unit": g.unit,
+                "datetime": g.datetime.isoformat(),
+                "age_seconds": max(0.0, (now - g.datetime).total_seconds()),
+            }
+            for g in latest_gases
+        }
+
+        latest_loc = db.session.execute(
+            db.select(LocationMeasurement).order_by(LocationMeasurement.id.desc()).limit(1)
+        ).scalar()
+        loc_data = (
+            {
+                "latitude": latest_loc.latitude,
+                "longitude": latest_loc.longitude,
+                "speed": latest_loc.speed,
+                "heading": latest_loc.heading,
+                "datetime": latest_loc.datetime.isoformat(),
+                "age_seconds": max(0.0, (now - latest_loc.datetime).total_seconds()),
+            }
+            if latest_loc
+            else None
+        )
+
+        latest_wind = db.session.execute(
+            db.select(WindMeasurement).order_by(WindMeasurement.id.desc()).limit(1)
+        ).scalar()
+        wind_data = (
+            {
+                "speed": latest_wind.speed,
+                "heading": latest_wind.heading,
+                "datetime": latest_wind.datetime.isoformat(),
+                "age_seconds": max(0.0, (now - latest_wind.datetime).total_seconds()),
+            }
+            if latest_wind
+            else None
+        )
+
+        return jsonify({
+            "server_time": now.isoformat(),
+            "gas": gas_data,
+            "location": loc_data,
+            "wind": wind_data,
+        })
+
+    @app.get('/campaign/<int:campaign_id>/download')
+    def campaign_download(campaign_id: int):
+        target = db.session.execute(
+            db.select(Campaign).where(Campaign.id == campaign_id)
+        ).scalar()
+        if not target:
+            return {"error": "Campaign not found"}, 404
+
+        end_dt = target.end or datetime.datetime.now()
+        fmt = request.args.get('format', 'json').lower()
+
+        gases = db.session.execute(
+            db.select(GasMeasurement)
+            .where(GasMeasurement.datetime >= target.start)
+            .where(GasMeasurement.datetime <= end_dt)
+            .order_by(GasMeasurement.datetime.asc())
+        ).scalars().all()
+
+        buf = datetime.timedelta(seconds=15)
+        locs = db.session.execute(
+            db.select(LocationMeasurement)
+            .where(LocationMeasurement.datetime >= target.start - buf)
+            .where(LocationMeasurement.datetime <= end_dt + buf)
+            .order_by(LocationMeasurement.datetime.asc())
+        ).scalars().all()
+        loc_times = [l.datetime for l in locs]
+
+        winds = db.session.execute(
+            db.select(WindMeasurement)
+            .where(WindMeasurement.datetime >= target.start)
+            .where(WindMeasurement.datetime <= end_dt)
+            .order_by(WindMeasurement.datetime.asc())
+        ).scalars().all()
+
+        safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', target.name or f'campaign_{target.id}').strip('_')
+        base_fname = f"{safe_name}_{target.start.strftime('%Y-%m-%d_%H-%M')}"
+
+        if fmt == 'csv':
+            out = io.StringIO()
+            writer = csv.writer(out)
+            writer.writerow(['datetime', 'type', 'concentration', 'unit', 'latitude', 'longitude', 'heading', 'speed'])
+            for g in gases:
+                loc = _nearest_location(g.datetime, loc_times, locs)
+                writer.writerow([
+                    g.datetime.isoformat(),
+                    g.type,
+                    g.concentration,
+                    g.unit,
+                    loc.latitude if loc else '',
+                    loc.longitude if loc else '',
+                    loc.heading if loc else '',
+                    loc.speed if loc else '',
+                ])
+            return Response(
+                out.getvalue(),
+                mimetype='text/csv',
+                headers={'Content-Disposition': f'attachment; filename="{base_fname}.csv"'},
+            )
+
+        gas_by_type = {}
+        for g in gases:
+            loc = _nearest_location(g.datetime, loc_times, locs)
+            gas_by_type.setdefault(g.type, []).append({
+                'datetime': g.datetime.isoformat(),
+                'type': g.type,
+                'concentration': g.concentration,
+                'unit': g.unit,
+                'latitude': loc.latitude if loc else None,
+                'longitude': loc.longitude if loc else None,
+                'heading': loc.heading if loc else None,
+                'speed': loc.speed if loc else None,
+            })
+
+        payload = {
+            'campaign': {
+                'id': target.id,
+                'name': target.name,
+                'author': target.author,
+                'description': target.description,
+                'start': target.start.isoformat(),
+                'end': target.end.isoformat() if target.end else None,
+            },
+            'gas': gas_by_type,
+            'wind': [
+                {
+                    'datetime': w.datetime.isoformat(),
+                    'speed': w.speed,
+                    'heading': w.heading,
+                }
+                for w in winds
+            ],
+        }
+        return Response(
+            json.dumps(payload, indent=2),
+            mimetype='application/json',
+            headers={'Content-Disposition': f'attachment; filename="{base_fname}.json"'},
+        )
 
     @app.route('/campaign/edit/<int:campaign_id>')
     def campaign_edit(campaign_id: int):

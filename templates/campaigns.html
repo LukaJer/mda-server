@@ -2,55 +2,581 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Live Map</title>
-</head>
-<style>
-form {
-  border: 2px solid yellowgreen;
-  margin: 2px;
-  padding: 2px;
-}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EnvBike — Dashboard</title>
+    <style>
+        :root {
+            --bg: #f1f5f9;
+            --surface: #ffffff;
+            --surface-alt: #f8fafc;
+            --border: #cbd5e1;
+            --text: #0f172a;
+            --muted: #64748b;
+            --accent: #0284c7;
+            --accent-hover: #0369a1;
+            --green: #16a34a;
+            --amber: #d97706;
+            --red: #dc2626;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 20px 16px 48px;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.45;
+        }
+        .container {
+            max-width: 1440px;
+            margin: 0 auto;
+            display: grid;
+            gap: 22px;
+        }
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            letter-spacing: -0.02em;
+        }
+        .subtitle {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+        }
+        .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+        .dot.stale { background: var(--amber); }
+        .dot.offline { background: var(--red); }
 
-.campaign {
-  border: 2px solid black;
-  margin: 2px;
-  padding: 2px;
-}
-</style>
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px 20px;
+        }
+        .card h2 {
+            margin: 0 0 14px;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        /* Live telemetry grouped by instrument */
+        .instruments-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 16px;
+        }
+        .instrument-card {
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .instrument-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .instrument-title {
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+        .instrument-sub {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+        .channels-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+        }
+        .channel-item {
+            background: #ffffff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .channel-label {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        .sensor-val {
+            font-size: 1.35rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .sensor-unit {
+            font-size: 0.76rem;
+            font-weight: 500;
+            color: var(--muted);
+            margin-left: 3px;
+        }
+        .sensor-meta {
+            font-size: 0.72rem;
+            color: var(--muted);
+        }
+
+        /* Active campaign banner */
+        .active-banner {
+            border-color: rgba(34, 197, 94, 0.5);
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), var(--surface));
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+        .active-info h3 {
+            margin: 0 0 4px;
+            font-size: 1.15rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .active-info p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+
+        /* Forms & buttons */
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            align-items: end;
+        }
+        label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        input[type="text"], input[type="datetime-local"] {
+            width: 100%;
+            padding: 9px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 9px 15px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            font-size: 0.88rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .btn-primary { background: var(--accent); color: #ffffff; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-success { background: var(--green); color: #ffffff; }
+        .btn-danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+        .btn-danger:hover { background: #fee2e2; }
+        .btn-ghost { background: var(--surface-alt); color: var(--text); border-color: var(--border); }
+        .btn-ghost:hover { border-color: var(--accent); }
+        .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+
+        details {
+            margin-top: 14px;
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+        }
+        summary {
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 0.85rem;
+            user-select: none;
+        }
+        summary:hover { color: var(--text); }
+
+        /* Campaign table */
+        .table-wrap { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        th {
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .actions-cell {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .badge-live {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            background: #dcfce7;
+            color: #15803d;
+        }
+        @media (max-width: 600px) {
+            .sensor-tile.wide { grid-column: span 1; }
+        }
+    </style>
+</head>
 <body>
-    <h1>Measurement System</h1>
-      <p>Measurement system is {% if enable_measurements %}ACTIVE{% else %}DEACTIVATED{% endif %}</p>
-      {% if enable_measurements %}
-      <a href="/enable-measurements/0">Disable system</a>
-      {% else %}
-      <a href="/enable-measurements/1">Enable system</a>
-      {% endif %}
-    <h1>Campaigns</h1>
-    <form action="/campaign" method="post">
-      <label for="start">Start:</label>
-      <input type="datetime-local" name="start" id="start" value="{{now.isoformat(timespec='minutes')}}"><br>
-      <label for="end">End:</label>
-      <input type="datetime-local" name="end" id="end"><br>
-      <label for="name">Name:</label>
-      <input type="text" name="name" id="name"><br>
-      <label for="author">Author:</label>
-      <input type="text" name="author" id="author"><br>
-      <label for="description">Description:</label>
-      <input type="text" name="description" id="description"><br>
-      <input type="submit" value="Create">
-    </form>
-    {% for campaign in campaigns %}
-    <div class="campaign">
-      <p>Start: {{campaign.start.strftime('%a %d %B %Y, %H:%M')}}</p>
-      <p>End: {% if campaign.end %}{{campaign.end.strftime('%a %d %B %Y, %H:%M')}}{% endif %}</p>
-      <p>Name: {% if campaign.name %}{{campaign.name}}{% endif %}</p>
-      <p>Author: {% if campaign.author %}{{campaign.author}}{% endif %}</p>
-      <p>Description: {% if campaign.description %}{{campaign.description}}{% endif %}</p>
-      <a href="/campaign/edit/{{campaign.id}}">Edit</a>
-      <a href="/map/{{campaign.id}}">Show</a>
-      <a href="/campaign/delete/{{campaign.id}}">Delete</a>
+    <div class="container">
+        <header>
+            <div>
+                <h1>EnvBike — Mobile Data Acquisition</h1>
+            </div>
+            <div class="pill">
+                <span class="dot" id="poll-dot"></span>
+                <span id="poll-status">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Active Campaign Banner (if any campaign has no end time) -->
+        {% set active_campaigns = campaigns | selectattr('end', 'none') | list %}
+        {% for ac in active_campaigns %}
+        <div class="card active-banner">
+            <div class="active-info">
+                <h3><span class="dot live"></span> Active: {{ ac.name or ('Campaign #' ~ ac.id) }}</h3>
+                <p>Started {{ ac.start.strftime('%Y-%m-%d %H:%M:%S') }}{% if ac.author %} &middot; {{ ac.author }}{% endif %}{% if ac.description %} &middot; {{ ac.description }}{% endif %}</p>
+            </div>
+            <div class="actions-cell">
+                <a class="btn btn-primary" href="/map/{{ ac.id }}">Open Live Map</a>
+                <a class="btn btn-ghost" href="/campaign/{{ ac.id }}/download?format=json">JSON</a>
+                <a class="btn btn-ghost" href="/campaign/{{ ac.id }}/download?format=csv">CSV</a>
+                <form action="/campaign/{{ ac.id }}/stop" method="post" style="margin:0;">
+                    <button type="submit" class="btn btn-danger">Stop Campaign</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Live Instrument Telemetry -->
+        <section class="card">
+            <h2>
+                <span>Live Instruments</span>
+                <span class="subtitle" id="last-updated">Waiting for data...</span>
+            </h2>
+            <div class="instruments-grid" id="telemetry-grid">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Start New Campaign -->
+        <section class="card">
+            <h2>Start New Campaign</h2>
+            <form action="/campaign/start" method="post">
+                <div class="form-row">
+                    <div>
+                        <label for="quick-name">Campaign Name (optional)</label>
+                        <input type="text" name="name" id="quick-name" placeholder="e.g. Morning Ride">
+                    </div>
+                    <div>
+                        <label for="quick-author">Author</label>
+                        <input type="text" name="author" id="quick-author" placeholder="Rider / Operator">
+                    </div>
+                    <div>
+                        <label for="quick-desc">Description</label>
+                        <input type="text" name="description" id="quick-desc" placeholder="Route or notes">
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-success" style="width:100%;">Start Now</button>
+                    </div>
+                </div>
+            </form>
+
+            <details>
+                <summary>Create campaign with custom start / end times</summary>
+                <form action="/campaign" method="post" style="margin-top:12px;">
+                    <div class="form-row">
+                        <div>
+                            <label for="start">Start</label>
+                            <input type="datetime-local" name="start" id="start" value="{{ now.isoformat(timespec='minutes') }}" required>
+                        </div>
+                        <div>
+                            <label for="end">End (optional)</label>
+                            <input type="datetime-local" name="end" id="end">
+                        </div>
+                        <div>
+                            <label for="name">Name</label>
+                            <input type="text" name="name" id="name">
+                        </div>
+                        <div>
+                            <label for="author">Author</label>
+                            <input type="text" name="author" id="author">
+                        </div>
+                        <div>
+                            <label for="description">Description</label>
+                            <input type="text" name="description" id="description">
+                        </div>
+                        <div>
+                            <button type="submit" class="btn btn-primary" style="width:100%;">Create</button>
+                        </div>
+                    </div>
+                </form>
+            </details>
+        </section>
+
+        <!-- Campaigns List -->
+        <section class="card">
+            <h2>Campaigns ({{ campaigns | length }})</h2>
+            {% if campaigns %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Start</th>
+                            <th>End</th>
+                            <th>Author</th>
+                            <th>Description</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for campaign in campaigns %}
+                        <tr>
+                            <td><strong>{{ campaign.name or ('Campaign #' ~ campaign.id) }}</strong></td>
+                            <td>{{ campaign.start.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>
+                                {% if campaign.end %}
+                                    {{ campaign.end.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}
+                                    <span class="badge-live">LIVE</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ campaign.author or '—' }}</td>
+                            <td>{{ campaign.description or '—' }}</td>
+                            <td>
+                                <div class="actions-cell">
+                                    <a class="btn btn-primary btn-sm" href="/map/{{ campaign.id }}">Map</a>
+                                    <a class="btn btn-ghost btn-sm" href="/campaign/{{ campaign.id }}/download?format=json">JSON</a>
+                                    <a class="btn btn-ghost btn-sm" href="/campaign/{{ campaign.id }}/download?format=csv">CSV</a>
+                                    {% if not campaign.end %}
+                                    <form action="/campaign/{{ campaign.id }}/stop" method="post" style="margin:0;">
+                                        <button type="submit" class="btn btn-danger btn-sm">Stop</button>
+                                    </form>
+                                    {% endif %}
+                                    <a class="btn btn-ghost btn-sm" href="/campaign/edit/{{ campaign.id }}">Edit</a>
+                                    <a class="btn btn-danger btn-sm" href="/campaign/delete/{{ campaign.id }}" onclick="return confirm('Delete this campaign?');">Delete</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="subtitle">No campaigns yet. Click <strong>Start Now</strong> above to begin recording.</p>
+            {% endif %}
+        </section>
     </div>
-  {% endfor %}
+
+    <script>
+        const INSTRUMENTS = [
+            { name: "Nitrous Oxides", subtitle: "Envea AC32e", species: ["NO", "NO2", "NOx"] },
+            { name: "Ozone", subtitle: "Envea O342e", species: ["O3"] },
+            { name: "Carbon Monoxide", subtitle: "Envea CO12e", species: ["CO"] },
+            { name: "PArticulate Matter", subtitle: "Grimm 11-D", species: ["PM10", "PM4", "PM2.5", "PM1"] },
+        ];
+
+        function freshnessDot(ageSeconds) {
+            if (ageSeconds === null || ageSeconds === undefined) return '<span class="dot"></span>';
+            if (ageSeconds <= 15) return '<span class="dot live"></span>';
+            if (ageSeconds <= 120) return '<span class="dot stale"></span>';
+            return '<span class="dot offline"></span>';
+        }
+
+        function formatAge(ageSeconds) {
+            if (ageSeconds === null || ageSeconds === undefined) return 'No data';
+            if (ageSeconds < 2) return 'Just now';
+            if (ageSeconds < 60) return `${Math.round(ageSeconds)}s ago`;
+            if (ageSeconds < 3600) return `${Math.round(ageSeconds / 60)}m ago`;
+            return `${Math.round(ageSeconds / 3600)}h ago`;
+        }
+
+        function formatVal(val) {
+            if (val === null || val === undefined) return '--';
+            return Math.abs(val) >= 100 ? val.toFixed(1) : val.toFixed(2);
+        }
+
+        function renderGasInstrumentCard(title, subtitle, speciesList, gas) {
+            const ages = speciesList
+                .map(sp => gas[sp] ? gas[sp].age_seconds : null)
+                .filter(a => a !== null && a !== undefined);
+            const minAge = ages.length ? Math.min(...ages) : null;
+
+            const channelsHtml = speciesList.map(sp => {
+                const entry = gas[sp];
+                const val = entry ? formatVal(entry.concentration) : '--';
+                const unit = entry ? entry.unit : '';
+                return `
+                    <div class="channel-item">
+                        <div class="channel-label">${sp}</div>
+                        <div class="sensor-val">${val}<span class="sensor-unit">${unit}</span></div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="instrument-card">
+                    <div class="instrument-header">
+                        <div>
+                            <div class="instrument-title">${title}</div>
+                            <div class="instrument-sub">${subtitle}</div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="sensor-meta">${formatAge(minAge)}</span>
+                            ${freshnessDot(minAge)}
+                        </div>
+                    </div>
+                    <div class="channels-grid">${channelsHtml}</div>
+                </div>
+            `;
+        }
+
+        function renderTelemetry(data) {
+            const grid = document.getElementById('telemetry-grid');
+            const cards = [];
+            const gas = data.gas || {};
+
+            for (const inst of INSTRUMENTS) {
+                cards.push(renderGasInstrumentCard(inst.name, inst.subtitle, inst.species, gas));
+            }
+
+            // GPS instrument card
+            const loc = data.location;
+            const locAge = loc ? loc.age_seconds : null;
+            cards.push(`
+                <div class="instrument-card">
+                    <div class="instrument-header">
+                        <div>
+                            <div class="instrument-title">GPS Receiver</div>
+                            <div class="instrument-sub">Position &amp; Speed (NMEA)</div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="sensor-meta">${formatAge(locAge)}</span>
+                            ${freshnessDot(locAge)}
+                        </div>
+                    </div>
+                    <div class="channels-grid">
+                        <div class="channel-item">
+                            <div class="channel-label">Coordinates</div>
+                            <div class="sensor-val" style="font-size:0.95rem;">
+                                ${loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix'}
+                            </div>
+                        </div>
+                        <div class="channel-item">
+                            <div class="channel-label">Speed / Hdg</div>
+                            <div class="sensor-val" style="font-size:0.95rem;">
+                                ${loc ? `${(loc.speed * 3.6).toFixed(1)} km/h &middot; ${loc.heading.toFixed(0)}&deg;` : '--'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `);
+
+            // Wind instrument card
+            const wind = data.wind;
+            const windAge = wind ? wind.age_seconds : null;
+            cards.push(`
+                <div class="instrument-card">
+                    <div class="instrument-header">
+                        <div>
+                            <div class="instrument-title">Lufft Wind Sensor</div>
+                            <div class="instrument-sub">Wind Speed &amp; Direction (UMB)</div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="sensor-meta">${formatAge(windAge)}</span>
+                            ${freshnessDot(windAge)}
+                        </div>
+                    </div>
+                    <div class="channels-grid">
+                        <div class="channel-item">
+                            <div class="channel-label">Speed</div>
+                            <div class="sensor-val">${wind ? wind.speed.toFixed(1) : '--'}<span class="sensor-unit">m/s</span></div>
+                        </div>
+                        <div class="channel-item">
+                            <div class="channel-label">Direction</div>
+                            <div class="sensor-val">${wind ? wind.heading.toFixed(0) : '--'}<span class="sensor-unit">&deg;</span></div>
+                        </div>
+                    </div>
+                </div>
+            `);
+
+            grid.innerHTML = cards.join('');
+        }
+
+        async function pollLive() {
+            const dot = document.getElementById('poll-dot');
+            const status = document.getElementById('poll-status');
+            const updated = document.getElementById('last-updated');
+            try {
+                const resp = await fetch('/api/live');
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                renderTelemetry(data);
+                dot.className = 'dot live';
+                status.textContent = 'Server Online';
+                updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+            } catch (err) {
+                dot.className = 'dot offline';
+                status.textContent = 'Server Unreachable';
+            }
+        }
+
+        pollLive();
+        setInterval(pollLive, 1500);
+    </script>
 </body>
 </html>
