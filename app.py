@@ -3,6 +3,7 @@ import csv
 import datetime
 import io
 import json
+import os
 import re
 from configparser import ConfigParser
 from functools import wraps
@@ -55,6 +56,27 @@ def serialize(func):
         except Exception as error:
             return {"error": str(error)}
     return wrapper
+
+
+DEVICES_CONFIG_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "devices.json")
+)
+
+
+def load_devices_config() -> dict:
+    try:
+        with open(DEVICES_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {
+            "AC32e": {"enabled": True, "name": "Nitrous Oxides", "subtitle": "Envea AC32e", "species": ["NO", "NO2", "NOx"], "interval": 1.0, "stale_after": 15, "offline_after": 120},
+            "O342e": {"enabled": True, "name": "Ozone", "subtitle": "Envea O342e", "species": ["O3"], "interval": 1.0, "stale_after": 15, "offline_after": 120},
+            "CO12e": {"enabled": True, "name": "Carbon Monoxide", "subtitle": "Envea CO12e", "species": ["CO"], "interval": 1.0, "stale_after": 15, "offline_after": 120},
+            "Grimm11D": {"enabled": True, "name": "Particulate Matter", "subtitle": "Grimm 11-D", "species": ["PM10", "PM4", "PM2.5", "PM1"], "interval": 6.0, "stale_after": 25, "offline_after": 120},
+            "Picarro": {"enabled": True, "name": "Greenhouse Gases", "subtitle": "Picarro CRDS", "species": ["CH4", "CO2", "H2O"], "interval": 2.0, "stale_after": 15, "offline_after": 120},
+            "GPS": {"enabled": True, "name": "GPS Receiver", "subtitle": "Position & Speed (NMEA)", "interval": 1.0, "stale_after": 15, "offline_after": 120},
+            "Wind": {"enabled": True, "name": "Lufft Wind Sensor", "subtitle": "Wind Speed & Direction (UMB)", "interval": 1.0, "stale_after": 15, "offline_after": 120},
+        }
 
 
 def get_db_config():
@@ -262,6 +284,7 @@ def create_app() -> Flask:
                 'campaigns.html',
                 campaigns=campaigns,
                 short_campaigns=short_campaigns,
+                devices_config=load_devices_config(),
                 now=now,
                 enable_measurements=app.config["ACCEPT_MEASUREMENT_DATA"])
         else:

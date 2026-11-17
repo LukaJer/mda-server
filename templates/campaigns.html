@@ -503,22 +503,27 @@
     </div>
 
     <script>
-        const SENSOR_THRESHOLDS = {
-            AC32e:    { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
-            O342e:    { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
-            CO12e:    { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
-            Grimm11D: { intervalMs: 6000, staleAfter: 25, offlineAfter: 120 },
-            GPS:      { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
-            Wind:     { intervalMs: 1000, staleAfter: 15, offlineAfter: 120 },
-        };
+        const DEVICES_CONFIG = {{ devices_config | tojson }};
+        const SENSOR_THRESHOLDS = {};
+        for (const [key, cfg] of Object.entries(DEVICES_CONFIG)) {
+            SENSOR_THRESHOLDS[key] = {
+                intervalMs: Math.round((cfg.interval || 1.0) * 1000),
+                staleAfter: cfg.stale_after ?? 15,
+                offlineAfter: cfg.offline_after ?? 120,
+            };
+        }
         const IDLE_POLL_MS = 5000;
 
-        const INSTRUMENTS = [
-            { name: "Nitrous Oxides", sensor: "AC32e", subtitle: "Envea AC32e", species: ["NO", "NO2", "NOx"] },
-            { name: "Ozone", sensor: "O342e", subtitle: "Envea O342e", species: ["O3"] },
-            { name: "Carbon Monoxide", sensor: "CO12e", subtitle: "Envea CO12e", species: ["CO"] },
-            { name: "PArticulate Matter", sensor: "Grimm11D", subtitle: "Grimm 11-D", species: ["PM10", "PM4", "PM2.5", "PM1"] },
-        ];
+        const INSTRUMENTS = Object.entries(DEVICES_CONFIG)
+            .filter(([key, cfg]) => cfg.enabled && Array.isArray(cfg.species) && cfg.species.length > 0)
+            .map(([key, cfg]) => ({
+                name: cfg.name || key,
+                sensor: key,
+                subtitle: cfg.subtitle || key,
+                species: cfg.species,
+            }));
+        const GPS_ENABLED = Boolean(DEVICES_CONFIG.GPS && DEVICES_CONFIG.GPS.enabled);
+        const WIND_ENABLED = Boolean(DEVICES_CONFIG.Wind && DEVICES_CONFIG.Wind.enabled);
 
         function resolveStatus(sensor, logEntry, dataAgeSeconds) {
             const { staleAfter, offlineAfter } = SENSOR_THRESHOLDS[sensor] || { staleAfter: 15, offlineAfter: 120 };
@@ -605,57 +610,61 @@
                 `);
             }
 
-            cards.push(`
-                <div class="instrument-card">
-                    <div class="instrument-header">
-                        <div>
-                            <div class="instrument-title">GPS Receiver</div>
-                            <div class="instrument-sub">Position &amp; Speed (NMEA)</div>
+            if (GPS_ENABLED) {
+                cards.push(`
+                    <div class="instrument-card">
+                        <div class="instrument-header">
+                            <div>
+                                <div class="instrument-title">${DEVICES_CONFIG.GPS.name || 'GPS Receiver'}</div>
+                                <div class="instrument-sub">${DEVICES_CONFIG.GPS.subtitle || 'Position & Speed (NMEA)'}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="sensor-meta" id="age-GPS">No data</span>
+                                <span class="dot" id="dot-GPS"></span>
+                            </div>
                         </div>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <span class="sensor-meta" id="age-GPS">No data</span>
-                            <span class="dot" id="dot-GPS"></span>
+                        <div class="channels-grid">
+                            <div class="channel-item">
+                                <div class="channel-label">Coordinates</div>
+                                <div class="sensor-val" style="font-size:0.95rem;" id="gps-coords">No fix</div>
+                            </div>
+                            <div class="channel-item">
+                                <div class="channel-label">Speed / Hdg</div>
+                                <div class="sensor-val" style="font-size:0.95rem;" id="gps-speed">--</div>
+                            </div>
                         </div>
+                        <div class="status-line" id="status-GPS">Status: Unconnected</div>
                     </div>
-                    <div class="channels-grid">
-                        <div class="channel-item">
-                            <div class="channel-label">Coordinates</div>
-                            <div class="sensor-val" style="font-size:0.95rem;" id="gps-coords">No fix</div>
-                        </div>
-                        <div class="channel-item">
-                            <div class="channel-label">Speed / Hdg</div>
-                            <div class="sensor-val" style="font-size:0.95rem;" id="gps-speed">--</div>
-                        </div>
-                    </div>
-                    <div class="status-line" id="status-GPS">Status: Unconnected</div>
-                </div>
-            `);
+                `);
+            }
 
-            cards.push(`
-                <div class="instrument-card">
-                    <div class="instrument-header">
-                        <div>
-                            <div class="instrument-title">Lufft Wind Sensor</div>
-                            <div class="instrument-sub">Wind Speed &amp; Direction (UMB)</div>
+            if (WIND_ENABLED) {
+                cards.push(`
+                    <div class="instrument-card">
+                        <div class="instrument-header">
+                            <div>
+                                <div class="instrument-title">${DEVICES_CONFIG.Wind.name || 'Lufft Wind Sensor'}</div>
+                                <div class="instrument-sub">${DEVICES_CONFIG.Wind.subtitle || 'Wind Speed & Direction (UMB)'}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="sensor-meta" id="age-Wind">No data</span>
+                                <span class="dot" id="dot-Wind"></span>
+                            </div>
                         </div>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <span class="sensor-meta" id="age-Wind">No data</span>
-                            <span class="dot" id="dot-Wind"></span>
+                        <div class="channels-grid">
+                            <div class="channel-item">
+                                <div class="channel-label">Speed</div>
+                                <div class="sensor-val"><span id="wind-speed">--</span><span class="sensor-unit">m/s</span></div>
+                            </div>
+                            <div class="channel-item">
+                                <div class="channel-label">Direction</div>
+                                <div class="sensor-val"><span id="wind-dir">--</span><span class="sensor-unit">&deg;</span></div>
+                            </div>
                         </div>
+                        <div class="status-line" id="status-Wind">Status: Unconnected</div>
                     </div>
-                    <div class="channels-grid">
-                        <div class="channel-item">
-                            <div class="channel-label">Speed</div>
-                            <div class="sensor-val"><span id="wind-speed">--</span><span class="sensor-unit">m/s</span></div>
-                        </div>
-                        <div class="channel-item">
-                            <div class="channel-label">Direction</div>
-                            <div class="sensor-val"><span id="wind-dir">--</span><span class="sensor-unit">&deg;</span></div>
-                        </div>
-                    </div>
-                    <div class="status-line" id="status-Wind">Status: Unconnected</div>
-                </div>
-            `);
+                `);
+            }
 
             grid.innerHTML = cards.join('');
         }
@@ -694,22 +703,26 @@
                 }
             }
 
-            const loc = data.location;
-            const locAge = loc ? loc.age_seconds : null;
-            setText('gps-coords', loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
-            setText('gps-speed', loc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
-            const gpsMs = applySensorStatus('GPS', logs['GPS'], locAge);
-            if (gpsMs !== null && (fastestActiveMs === null || gpsMs < fastestActiveMs)) {
-                fastestActiveMs = gpsMs;
+            if (GPS_ENABLED) {
+                const loc = data.location;
+                const locAge = loc ? loc.age_seconds : null;
+                setText('gps-coords', loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
+                setText('gps-speed', loc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
+                const gpsMs = applySensorStatus('GPS', logs['GPS'], locAge);
+                if (gpsMs !== null && (fastestActiveMs === null || gpsMs < fastestActiveMs)) {
+                    fastestActiveMs = gpsMs;
+                }
             }
 
-            const wind = data.wind;
-            const windAge = wind ? wind.age_seconds : null;
-            setText('wind-speed', wind ? wind.speed.toFixed(1) : '--');
-            setText('wind-dir', wind ? wind.heading.toFixed(0) : '--');
-            const windMs = applySensorStatus('Wind', logs['Wind'], windAge);
-            if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
-                fastestActiveMs = windMs;
+            if (WIND_ENABLED) {
+                const wind = data.wind;
+                const windAge = wind ? wind.age_seconds : null;
+                setText('wind-speed', wind ? wind.speed.toFixed(1) : '--');
+                setText('wind-dir', wind ? wind.heading.toFixed(0) : '--');
+                const windMs = applySensorStatus('Wind', logs['Wind'], windAge);
+                if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
+                    fastestActiveMs = windMs;
+                }
             }
 
             // Cap slow-only mode at 3s so status transitions remain snappy
