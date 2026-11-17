@@ -149,6 +149,29 @@
             font-size: 0.72rem;
             color: var(--muted);
         }
+        .status-line {
+            font-size: 0.76rem;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #f1f5f9;
+            color: var(--muted);
+            border: 1px solid var(--border);
+        }
+        .status-line.ok {
+            background: #f0fdf4;
+            color: #15803d;
+            border-color: #bbf7d0;
+        }
+        .status-line.warn {
+            background: #fffbeb;
+            color: #b45309;
+            border-color: #fde68a;
+        }
+        .status-line.err {
+            background: #fef2f2;
+            color: #b91c1c;
+            border-color: #fecaca;
+        }
 
         /* Active campaign banner */
         .active-banner {
@@ -423,18 +446,53 @@
     </div>
 
     <script>
+        const POLL_INTERVAL_MS = 1500;
+        const SENSOR_THRESHOLDS = {
+            AC32e:    { staleAfter: 15, offlineAfter: 120 },
+            O342e:    { staleAfter: 15, offlineAfter: 120 },
+            CO12e:    { staleAfter: 15, offlineAfter: 120 },
+            Grimm11D: { staleAfter: 25, offlineAfter: 120 },
+            GPS:      { staleAfter: 15, offlineAfter: 120 },
+            Wind:     { staleAfter: 15, offlineAfter: 120 },
+        };
+
         const INSTRUMENTS = [
-            { name: "Nitrous Oxides", subtitle: "Envea AC32e", species: ["NO", "NO2", "NOx"] },
-            { name: "Ozone", subtitle: "Envea O342e", species: ["O3"] },
-            { name: "Carbon Monoxide", subtitle: "Envea CO12e", species: ["CO"] },
-            { name: "PArticulate Matter", subtitle: "Grimm 11-D", species: ["PM10", "PM4", "PM2.5", "PM1"] },
+            { name: "Nitrous Oxides", sensor: "AC32e", subtitle: "Envea AC32e", species: ["NO", "NO2", "NOx"] },
+            { name: "Ozone", sensor: "O342e", subtitle: "Envea O342e", species: ["O3"] },
+            { name: "Carbon Monoxide", sensor: "CO12e", subtitle: "Envea CO12e", species: ["CO"] },
+            { name: "PArticulate Matter", sensor: "Grimm11D", subtitle: "Grimm 11-D", species: ["PM10", "PM4", "PM2.5", "PM1"] },
         ];
 
-        function freshnessDot(ageSeconds) {
-            if (ageSeconds === null || ageSeconds === undefined) return '<span class="dot"></span>';
-            if (ageSeconds <= 15) return '<span class="dot live"></span>';
-            if (ageSeconds <= 120) return '<span class="dot stale"></span>';
-            return '<span class="dot offline"></span>';
+        function resolveStatus(sensor, logEntry, dataAgeSeconds) {
+            const { staleAfter, offlineAfter } = SENSOR_THRESHOLDS[sensor] || { staleAfter: 15, offlineAfter: 120 };
+            const logAge = logEntry ? logEntry.age_seconds : null;
+            const hasLiveData = dataAgeSeconds !== null && dataAgeSeconds !== undefined && dataAgeSeconds <= staleAfter;
+            const hasStaleData = dataAgeSeconds !== null && dataAgeSeconds !== undefined && dataAgeSeconds > staleAfter && dataAgeSeconds <= offlineAfter;
+            const hasRecentData = hasLiveData || hasStaleData;
+            const hasRecentLog = logAge !== null && logAge !== undefined && logAge <= offlineAfter;
+
+            if (!hasRecentData && !hasRecentLog) {
+                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+            }
+            if (!logEntry || !logEntry.description) {
+                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok' };
+                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn' };
+                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+            }
+
+            const desc = logEntry.description;
+            if (desc === 'Unconnected') {
+                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+            }
+            if (desc.startsWith('ERROR')) {
+                return { text: desc, dotClass: 'offline', lineClass: 'err' };
+            }
+            if (desc === 'OK') {
+                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok' };
+                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn' };
+                return { text: 'Unconnected', dotClass: '', lineClass: '' };
+            }
+            return { text: desc, dotClass: 'stale', lineClass: 'warn' };
         }
 
         function formatAge(ageSeconds) {
@@ -450,7 +508,7 @@
             return Math.abs(val) >= 100 ? val.toFixed(1) : val.toFixed(2);
         }
 
-        function renderGasInstrumentCard(title, subtitle, speciesList, gas) {
+        function renderGasInstrumentCard(title, sensor, subtitle, speciesList, gas, logEntry) {
             const ages = speciesList
                 .map(sp => gas[sp] ? gas[sp].age_seconds : null)
                 .filter(a => a !== null && a !== undefined);
@@ -468,6 +526,7 @@
                 `;
             }).join('');
 
+            const st = resolveStatus(sensor, logEntry, minAge);
             return `
                 <div class="instrument-card">
                     <div class="instrument-header">
@@ -477,10 +536,11 @@
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <span class="sensor-meta">${formatAge(minAge)}</span>
-                            ${freshnessDot(minAge)}
+                            <span class="dot ${st.dotClass}"></span>
                         </div>
                     </div>
                     <div class="channels-grid">${channelsHtml}</div>
+                    <div class="status-line ${st.lineClass}">Status: ${st.text}</div>
                 </div>
             `;
         }
@@ -489,14 +549,16 @@
             const grid = document.getElementById('telemetry-grid');
             const cards = [];
             const gas = data.gas || {};
+            const logs = data.logs || {};
 
             for (const inst of INSTRUMENTS) {
-                cards.push(renderGasInstrumentCard(inst.name, inst.subtitle, inst.species, gas));
+                cards.push(renderGasInstrumentCard(inst.name, inst.sensor, inst.subtitle, inst.species, gas, logs[inst.sensor]));
             }
 
             // GPS instrument card
             const loc = data.location;
             const locAge = loc ? loc.age_seconds : null;
+            const gpsSt = resolveStatus('GPS', logs['GPS'], locAge);
             cards.push(`
                 <div class="instrument-card">
                     <div class="instrument-header">
@@ -506,7 +568,7 @@
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <span class="sensor-meta">${formatAge(locAge)}</span>
-                            ${freshnessDot(locAge)}
+                            <span class="dot ${gpsSt.dotClass}"></span>
                         </div>
                     </div>
                     <div class="channels-grid">
@@ -523,12 +585,14 @@
                             </div>
                         </div>
                     </div>
+                    <div class="status-line ${gpsSt.lineClass}">Status: ${gpsSt.text}</div>
                 </div>
             `);
 
             // Wind instrument card
             const wind = data.wind;
             const windAge = wind ? wind.age_seconds : null;
+            const windSt = resolveStatus('Wind', logs['Wind'], windAge);
             cards.push(`
                 <div class="instrument-card">
                     <div class="instrument-header">
@@ -538,7 +602,7 @@
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <span class="sensor-meta">${formatAge(windAge)}</span>
-                            ${freshnessDot(windAge)}
+                            <span class="dot ${windSt.dotClass}"></span>
                         </div>
                     </div>
                     <div class="channels-grid">
@@ -551,6 +615,7 @@
                             <div class="sensor-val">${wind ? wind.heading.toFixed(0) : '--'}<span class="sensor-unit">&deg;</span></div>
                         </div>
                     </div>
+                    <div class="status-line ${windSt.lineClass}">Status: ${windSt.text}</div>
                 </div>
             `);
 
@@ -572,11 +637,14 @@
             } catch (err) {
                 dot.className = 'dot offline';
                 status.textContent = 'Server Unreachable';
+            } finally {
+                setTimeout(pollLive, POLL_INTERVAL_MS);
             }
         }
 
+        // Always render instrument boxes immediately on page load
+        renderTelemetry({});
         pollLive();
-        setInterval(pollLive, 1500);
     </script>
 </body>
 </html>

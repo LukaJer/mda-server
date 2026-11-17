@@ -245,25 +245,19 @@ def create_app() -> Flask:
     def api_live():
         now = datetime.datetime.now()
 
-        latest_ids_subq = (
-            db.select(db.func.max(GasMeasurement.id).label('max_id'))
-            .group_by(GasMeasurement.type)
-            .subquery()
-        )
-        latest_gases = db.session.execute(
-            db.select(GasMeasurement)
-            .join(latest_ids_subq, GasMeasurement.id == latest_ids_subq.c.max_id)
+        # Scan only the most recent rows by primary key (fast O(1) index lookup)
+        recent_gases = db.session.execute(
+            db.select(GasMeasurement).order_by(GasMeasurement.id.desc()).limit(300)
         ).scalars().all()
-
-        gas_data = {
-            g.type: {
-                "concentration": g.concentration,
-                "unit": g.unit,
-                "datetime": g.datetime.isoformat(),
-                "age_seconds": max(0.0, (now - g.datetime).total_seconds()),
-            }
-            for g in latest_gases
-        }
+        gas_data = {}
+        for g in recent_gases:
+            if g.type not in gas_data:
+                gas_data[g.type] = {
+                    "concentration": g.concentration,
+                    "unit": g.unit,
+                    "datetime": g.datetime.isoformat(),
+                    "age_seconds": max(0.0, (now - g.datetime).total_seconds()),
+                }
 
         latest_loc = db.session.execute(
             db.select(LocationMeasurement).order_by(LocationMeasurement.id.desc()).limit(1)
@@ -295,11 +289,24 @@ def create_app() -> Flask:
             else None
         )
 
+        recent_logs = db.session.execute(
+            db.select(Log).order_by(Log.id.desc()).limit(100)
+        ).scalars().all()
+        logs_data = {}
+        for lg in recent_logs:
+            if lg.sensor not in logs_data:
+                logs_data[lg.sensor] = {
+                    "description": lg.description,
+                    "datetime": lg.datetime.isoformat(),
+                    "age_seconds": max(0.0, (now - lg.datetime).total_seconds()),
+                }
+
         return jsonify({
             "server_time": now.isoformat(),
             "gas": gas_data,
             "location": loc_data,
             "wind": wind_data,
+            "logs": logs_data,
         })
 
     @app.get('/campaign/<int:campaign_id>/download')

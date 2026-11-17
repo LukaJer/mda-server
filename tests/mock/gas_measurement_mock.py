@@ -14,6 +14,10 @@ class GasMeasurementMock(MeasurementMock):
     def _measurement_routine(self) -> None:
         while not self._stop.is_set():
             elapsed = time.time() - self.start_time
+            if elapsed < 12.0:
+                time.sleep(1.0)
+                continue
+
             now = datetime.now()
 
             no_val = 80.0 * math.sin(math.radians(3 * elapsed)) + 90.0
