@@ -19,6 +19,10 @@
             --red: #dc2626;
         }
         * { box-sizing: border-box; }
+        html, body {
+            max-width: 100%;
+            overflow-x: hidden;
+        }
         body {
             margin: 0;
             padding: 20px 16px 48px;
@@ -29,6 +33,7 @@
         }
         .container {
             max-width: 1440px;
+            width: 100%;
             margin: 0 auto;
             display: grid;
             gap: 22px;
@@ -77,6 +82,7 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 18px 20px;
+            min-width: 0;
         }
         .card h2 {
             margin: 0 0 14px;
@@ -90,7 +96,7 @@
         /* Live telemetry grouped by instrument */
         .instruments-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
             gap: 16px;
         }
         .instrument-card {
@@ -299,8 +305,32 @@
             border: 1px solid #fde68a;
             margin-left: 6px;
         }
-        @media (max-width: 600px) {
-            .sensor-tile.wide { grid-column: span 1; }
+        @media (max-width: 640px) {
+            body {
+                padding: 12px 10px 32px;
+            }
+            .container {
+                gap: 14px;
+            }
+            .card {
+                padding: 14px 12px;
+            }
+            header h1 {
+                font-size: 1.25rem;
+            }
+            .instruments-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .channels-grid {
+                grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+            }
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            .btn {
+                min-height: 40px;
+            }
         }
     </style>
 </head>

@@ -236,6 +236,25 @@ Map Display
                 }
             });
         }
+
+        // Auto-hide short-data warning on live campaigns once >= 120s of data is recorded
+        const shortWarn = document.getElementById('short-data-warning');
+        if (shortWarn && campaign.end === null) {
+            const checkSpan = async () => {
+                try {
+                    const r = await fetch('/campaign/{{ campaign.id }}/span');
+                    if (r.ok) {
+                        const info = await r.json();
+                        if (!info.short_data) {
+                            shortWarn.remove();
+                            return;
+                        }
+                    }
+                } catch (e) {}
+                setTimeout(checkSpan, 10000);
+            };
+            setTimeout(checkSpan, 10000);
+        }
     })();
 </script>
 <script src="/static/dist/bundle.js"></script>

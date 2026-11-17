@@ -49,7 +49,15 @@ class ApiHelper:
 
     @staticmethod
     def get_datetime_if_set(request: str) -> Optional[datetime]:
+        if not request or not request.strip():
+            return None
+        val = request.strip()
+        for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S"):
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                continue
         try:
-            return datetime.fromisoformat(request)
+            return datetime.fromisoformat(val)
         except ValueError:
             return None

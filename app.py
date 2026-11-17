@@ -92,14 +92,49 @@ def create_app() -> Flask:
     app.config["SQLALCHEMY_DATABASE_URI"] = get_db_config()
     db.init_app(app)
 
+    live_cache = {
+        "gas": {},
+        "location": None,
+        "wind": None,
+        "logs": {},
+    }
+
+    def _update_live_cache(measurement_type: str, m) -> None:
+        if measurement_type == "gas":
+            live_cache["gas"][m.type] = {
+                "concentration": m.concentration,
+                "unit": m.unit,
+                "datetime": m.datetime,
+            }
+        elif measurement_type == "location":
+            live_cache["location"] = {
+                "latitude": m.latitude,
+                "longitude": m.longitude,
+                "speed": m.speed,
+                "heading": m.heading,
+                "datetime": m.datetime,
+            }
+        elif measurement_type == "wind":
+            live_cache["wind"] = {
+                "speed": m.speed,
+                "heading": m.heading,
+                "datetime": m.datetime,
+            }
+        elif measurement_type == "log":
+            live_cache["logs"][m.sensor] = {
+                "description": m.description,
+                "datetime": m.datetime,
+            }
+
     @app.post("/measurement/<measurement_type>")
     @timeit
     def post_measurement(measurement_type: str):
-        if measurement_type != "log" and not app.config.get("ACCEPT_MEASUREMENT_DATA", True):
-            return {"paused": True, "message": "Measurement recording is paused"}, 200
         if request.is_json:
             try:
                 measurement = measurement_type_look_up[measurement_type].create_from_json(request.get_json())
+                _update_live_cache(measurement_type, measurement)
+                if measurement_type != "log" and not app.config.get("ACCEPT_MEASUREMENT_DATA", True):
+                    return {"paused": True, "message": "Measurement recording is paused"}, 200
                 db.session.add(measurement)
                 db.session.commit()
                 return {"success": "Successfully added measurement to database"}, 201
@@ -165,6 +200,20 @@ def create_app() -> Flask:
             measurements, locations, GasMeasurementWithLocation)
         return measurements_with_locations
 
+    @app.get('/campaign/<int:campaign_id>/span')
+    def campaign_span(campaign_id: int):
+        c = db.session.execute(db.select(Campaign).where(Campaign.id == campaign_id)).scalar()
+        if not c:
+            return {"error": "Campaign not found"}, 404
+        end_dt = c.end or datetime.datetime.now()
+        min_dt, max_dt = db.session.execute(
+            db.select(db.func.min(GasMeasurement.datetime), db.func.max(GasMeasurement.datetime))
+            .where(GasMeasurement.datetime >= c.start)
+            .where(GasMeasurement.datetime <= end_dt)
+        ).one()
+        span = (max_dt - min_dt).total_seconds() if (min_dt and max_dt) else 0.0
+        return jsonify({"span_seconds": span, "short_data": span < 120.0})
+
     @app.route('/map/<campaign_id>')
     def campaign_map(campaign_id: int):
         show_campaign = db.session.execute(db.select(Campaign).where(Campaign.id == campaign_id)).scalar()
@@ -217,8 +266,10 @@ def create_app() -> Flask:
                 enable_measurements=app.config["ACCEPT_MEASUREMENT_DATA"])
         else:
             campaign_id = int(request.form.get('id') or 0)
-            start = datetime.datetime.fromisoformat(request.form['start'])
-            end = ApiHelper.get_datetime_if_set(request.form['end'])
+            start = ApiHelper.get_datetime_if_set(request.form['start'])
+            if start is None:
+                return {"error": "Invalid start date/time"}, 400
+            end = ApiHelper.get_datetime_if_set(request.form.get('end', ''))
             name = ApiHelper.get_post_if_set(request.form["name"])
             author = ApiHelper.get_post_if_set(request.form["author"])
             description = ApiHelper.get_post_if_set(request.form["description"])
@@ -334,8 +385,48 @@ def create_app() -> Flask:
                     "age_seconds": max(0.0, (now - lg.datetime).total_seconds()),
                 }
 
+        # Overlay live_cache so paused instruments still show live readouts
+        for g_type, cached in live_cache["gas"].items():
+            db_entry = gas_data.get(g_type)
+            if db_entry is None or cached["datetime"].isoformat() >= db_entry["datetime"]:
+                gas_data[g_type] = {
+                    "concentration": cached["concentration"],
+                    "unit": cached["unit"],
+                    "datetime": cached["datetime"].isoformat(),
+                    "age_seconds": max(0.0, (now - cached["datetime"]).total_seconds()),
+                }
+        if live_cache["location"] is not None:
+            c_loc = live_cache["location"]
+            if loc_data is None or c_loc["datetime"].isoformat() >= loc_data["datetime"]:
+                loc_data = {
+                    "latitude": c_loc["latitude"],
+                    "longitude": c_loc["longitude"],
+                    "speed": c_loc["speed"],
+                    "heading": c_loc["heading"],
+                    "datetime": c_loc["datetime"].isoformat(),
+                    "age_seconds": max(0.0, (now - c_loc["datetime"]).total_seconds()),
+                }
+        if live_cache["wind"] is not None:
+            c_wind = live_cache["wind"]
+            if wind_data is None or c_wind["datetime"].isoformat() >= wind_data["datetime"]:
+                wind_data = {
+                    "speed": c_wind["speed"],
+                    "heading": c_wind["heading"],
+                    "datetime": c_wind["datetime"].isoformat(),
+                    "age_seconds": max(0.0, (now - c_wind["datetime"]).total_seconds()),
+                }
+        for sensor, c_log in live_cache["logs"].items():
+            db_log = logs_data.get(sensor)
+            if db_log is None or c_log["datetime"].isoformat() >= db_log["datetime"]:
+                logs_data[sensor] = {
+                    "description": c_log["description"],
+                    "datetime": c_log["datetime"].isoformat(),
+                    "age_seconds": max(0.0, (now - c_log["datetime"]).total_seconds()),
+                }
+
         return jsonify({
             "server_time": now.isoformat(),
+            "paused": not app.config.get("ACCEPT_MEASUREMENT_DATA", True),
             "gas": gas_data,
             "location": loc_data,
             "wind": wind_data,

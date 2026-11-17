@@ -88,12 +88,12 @@
                     <input type="text" name="author" id="author" value="{{ campaign.author or '' }}">
                 </div>
                 <div class="field">
-                    <label for="start">Start</label>
-                    <input type="datetime-local" name="start" id="start" value="{{ campaign.start.isoformat(timespec='minutes') }}" required>
+                    <label for="start">Start (DD/MM/YYYY HH:MM, 24h)</label>
+                    <input type="text" name="start" id="start" value="{{ campaign.start.strftime('%d/%m/%Y %H:%M') }}" placeholder="DD/MM/YYYY HH:MM" pattern="\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}(:\d{2})?" required>
                 </div>
                 <div class="field">
-                    <label for="end">End (leave empty for live campaign)</label>
-                    <input type="datetime-local" name="end" id="end" value="{% if campaign.end %}{{ campaign.end.isoformat(timespec='minutes') }}{% endif %}">
+                    <label for="end">End (DD/MM/YYYY HH:MM, 24h — leave empty for live campaign)</label>
+                    <input type="text" name="end" id="end" value="{% if campaign.end %}{{ campaign.end.strftime('%d/%m/%Y %H:%M') }}{% endif %}" placeholder="DD/MM/YYYY HH:MM" pattern="(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}(:\d{2})?)?">
                 </div>
                 <div class="field">
                     <label for="description">Description</label>
