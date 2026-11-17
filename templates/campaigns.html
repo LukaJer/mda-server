@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Live Map</title>
+</head>
+<style>
+form {
+  border: 2px solid yellowgreen;
+  margin: 2px;
+  padding: 2px;
+}
+
+.campaign {
+  border: 2px solid black;
+  margin: 2px;
+  padding: 2px;
+}
+</style>
+<body>
+    <h1>Measurement System</h1>
+      <p>Measurement system is {% if enable_measurements %}ACTIVE{% else %}DEACTIVATED{% endif %}</p>
+      {% if enable_measurements %}
+      <a href="/enable-measurements/0">Disable system</a>
+      {% else %}
+      <a href="/enable-measurements/1">Enable system</a>
+      {% endif %}
+    <h1>Campaigns</h1>
+    <form action="/campaign" method="post">
+      <label for="start">Start:</label>
+      <input type="datetime-local" name="start" id="start" value="{{now.isoformat(timespec='minutes')}}"><br>
+      <label for="end">End:</label>
+      <input type="datetime-local" name="end" id="end"><br>
+      <label for="name">Name:</label>
+      <input type="text" name="name" id="name"><br>
+      <label for="author">Author:</label>
+      <input type="text" name="author" id="author"><br>
+      <label for="description">Description:</label>
+      <input type="text" name="description" id="description"><br>
+      <input type="submit" value="Create">
+    </form>
+    {% for campaign in campaigns %}
+    <div class="campaign">
+      <p>Start: {{campaign.start.strftime('%a %d %B %Y, %H:%M')}}</p>
+      <p>End: {% if campaign.end %}{{campaign.end.strftime('%a %d %B %Y, %H:%M')}}{% endif %}</p>
+      <p>Name: {% if campaign.name %}{{campaign.name}}{% endif %}</p>
+      <p>Author: {% if campaign.author %}{{campaign.author}}{% endif %}</p>
+      <p>Description: {% if campaign.description %}{{campaign.description}}{% endif %}</p>
+      <a href="/campaign/edit/{{campaign.id}}">Edit</a>
+      <a href="/map/{{campaign.id}}">Show</a>
+      <a href="/campaign/delete/{{campaign.id}}">Delete</a>
+    </div>
+  {% endfor %}
+</body>
+</html>

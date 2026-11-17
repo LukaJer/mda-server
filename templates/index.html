@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Live Map</title>
+    <style>
+        #map {
+            height: {% if height is defined %}{{ height }};{% else %}calc(100% - 30px);{% endif %}
+            width: {% if width is defined %}{{ width }};{% else %}100%;{% endif %}
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="control-panel">
+        <select name="gas-selector" id="gas-selector">
+            
+            <option value="NO" selected>NO</option>
+            <option value="NO2">NO2</option>
+            <option value="NOx">NOx</option>
+            <option value="O3">O3</option>
+            <option value="CO">CO</option>
+            <option value="PM10">PM10</option>
+            <option value="PM4">PM4</option>
+            <option value="PM2.5">PM2.5</option>
+            <option value="PM1">PM1</option>
+            
+            <option value="CH4">CH4</option>
+            <option value="CH4-LI">CH4-LI</option>
+            <option value="CO2">CO2</option>
+            <option value="CO2-LI">CO2-LI</option>
+            <option value="H2O">H2O</option>
+        </select>
+        <span id="gas-concentration-display">-.--ppm</span>
+        <input type="range" id="gas-slider" min="0" max="1" value="0" step="1" class="slider">
+    </div>
+</body>
+<script>
+    var campaign = {
+        start: new Date("{{campaign.start.isoformat()}}"),
+        end: {% if campaign.end %} new Date("{{campaign.end.isoformat()}}"){% else %} null{% endif %}
+    };
+</script>
+<script src="/static/dist/bundle.js"></script>
+
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "livemap",
+  "version": "1.0.0",
+  "description": "",
+  "main": "livemap.js",
+  "scripts": {
+    "build": "webpack --config webpack.config.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "leaflet-rotatedmarker": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.14",
+    "@types/leaflet": "^1.9.12",
+    "css-loader": "^7.1.2",
+    "style-loader": "^4.0.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.4.5"
+  }
+}

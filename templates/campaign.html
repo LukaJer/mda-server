@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Campaign</title>
+</head>
+<body>
+    <h1>Campaign</h1>
+    <form action="/campaign" method="post">
+      <input type="hidden" name="id" value="{{campaign.id}}">
+      <label for="start">Start:</label>
+      <input type="datetime-local" name="start" id="start" value="{{campaign.start}}"><br>
+      <label for="end">End:</label>
+      <input type="datetime-local" name="end" id="end" value="{% if campaign.end %}{{campaign.end.strftime('%a %d %B %Y, %H:%M')}}{% endif %}"><br>
+      <label for="name">Name:</label>
+      <input type="text" name="name" id="name" value="{% if campaign.name %}{{campaign.name}}{% endif %}"><br>
+      <label for="author">Author:</label>
+      <input type="text" name="author" id="author" value="{% if campaign.author %}{{campaign.author}}{% endif %}"><br>
+      <label for="description">Description:</label>
+      <textarea type="text" name="description" id="description">{% if campaign.description %}{{campaign.description}}{% endif %}</textarea><br>
+      <input type="submit" value="Update">
+    </form>
+</body>
+</html>

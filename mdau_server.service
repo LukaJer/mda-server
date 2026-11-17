@@ -1,0 +1,13 @@
+[Unit]
+Description=Server for Mobile Data Acquisition
+After=network.target
+
+[Service]
+User=mda
+Group=www-data
+WorkingDirectory=/home/mda/repos/mda-server
+Environment="PATH=/home/mda/repos/mda-server/venv/bin"
+ExecStart=/home/mda/repos/mda-server/venv/bin/gunicorn --workers 2 --bind 0.0.0.0:5000 'app:create_app()'
+
+[Install]
+WantedBy=multi-user.target
