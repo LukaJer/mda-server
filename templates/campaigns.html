@@ -390,7 +390,10 @@
         <!-- Start New Campaign -->
         <section class="card">
             <h2>Start New Campaign</h2>
-            <form action="/campaign/start" method="post">
+            <div id="no-gps-warning" class="badge-warn" style="display:none; margin-bottom:12px; padding:8px 12px; font-size:0.85rem;">
+                &#9888; No GPS fix detected — measurements will use local system time and lack coordinates until GPS is acquired.
+            </div>
+            <form id="start-campaign-form" action="/campaign/start" method="post">
                 <div class="form-row">
                     <div>
                         <label for="quick-name">Campaign Name (optional)</label>
@@ -534,17 +537,17 @@
             const hasRecentLog = logAge !== null && logAge !== undefined && logAge <= offlineAfter;
 
             if (!hasRecentData && !hasRecentLog) {
-                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false };
             }
             if (!logEntry || !logEntry.description) {
                 if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok', active: true };
                 if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn', active: true };
-                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false };
             }
 
             const desc = logEntry.description;
-            if (desc === 'Unconnected') {
-                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
+            if (desc === 'Unconnected' || desc === 'Disconnected') {
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false };
             }
             if (desc.startsWith('ERROR')) {
                 return { text: desc, dotClass: 'offline', lineClass: 'err', active: true };
@@ -552,7 +555,7 @@
             if (desc === 'OK') {
                 if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok', active: true };
                 if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn', active: true };
-                return { text: 'Unconnected', dotClass: '', lineClass: '', active: false };
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false };
             }
             return { text: desc, dotClass: 'stale', lineClass: 'warn', active: true };
         }
@@ -709,9 +712,17 @@
                 setText('gps-coords', loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
                 setText('gps-speed', loc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
                 const gpsMs = applySensorStatus('GPS', logs['GPS'], locAge);
+                const gpsStatus = resolveStatus('GPS', logs['GPS'], locAge);
+                gpsHasLiveFix = gpsStatus.dotClass === 'live';
                 if (gpsMs !== null && (fastestActiveMs === null || gpsMs < fastestActiveMs)) {
                     fastestActiveMs = gpsMs;
                 }
+            } else {
+                gpsHasLiveFix = false;
+            }
+            const noGpsWarn = document.getElementById('no-gps-warning');
+            if (noGpsWarn) {
+                noGpsWarn.style.display = gpsHasLiveFix ? 'none' : 'inline-block';
             }
 
             if (WIND_ENABLED) {
@@ -730,6 +741,20 @@
         }
 
         let pollTimer = null;
+        let gpsHasLiveFix = false;
+
+        document.getElementById('start-campaign-form')?.addEventListener('submit', (e) => {
+            if (!gpsHasLiveFix) {
+                const ok = confirm(
+                    'Warning: No live GPS fix.\n' +
+                    'Measurements will use local system time and will not have GPS coordinates until a fix is acquired.\n\n' +
+                    'Start campaign anyway?'
+                );
+                if (!ok) {
+                    e.preventDefault();
+                }
+            }
+        });
 
         async function pollLive() {
             if (document.hidden) return;
