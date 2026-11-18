@@ -120,6 +120,7 @@ def create_app() -> Flask:
         "wind": None,
         "logs": {},
     }
+    server_started_at = datetime.datetime.now()
 
     def _update_live_cache(measurement_type: str, m) -> None:
         if measurement_type == "gas":
@@ -352,9 +353,12 @@ def create_app() -> Flask:
     def api_live():
         now = datetime.datetime.now()
 
-        # Scan only the most recent rows by primary key (fast O(1) index lookup)
+        # Scan only the most recent rows since server start
         recent_gases = db.session.execute(
-            db.select(GasMeasurement).order_by(GasMeasurement.id.desc()).limit(300)
+            db.select(GasMeasurement)
+            .where(GasMeasurement.datetime >= server_started_at)
+            .order_by(GasMeasurement.id.desc())
+            .limit(300)
         ).scalars().all()
         gas_data = {}
         for g in recent_gases:
@@ -367,7 +371,10 @@ def create_app() -> Flask:
                 }
 
         latest_loc = db.session.execute(
-            db.select(LocationMeasurement).order_by(LocationMeasurement.id.desc()).limit(1)
+            db.select(LocationMeasurement)
+            .where(LocationMeasurement.datetime >= server_started_at)
+            .order_by(LocationMeasurement.id.desc())
+            .limit(1)
         ).scalar()
         loc_data = (
             {
@@ -383,7 +390,10 @@ def create_app() -> Flask:
         )
 
         latest_wind = db.session.execute(
-            db.select(WindMeasurement).order_by(WindMeasurement.id.desc()).limit(1)
+            db.select(WindMeasurement)
+            .where(WindMeasurement.datetime >= server_started_at)
+            .order_by(WindMeasurement.id.desc())
+            .limit(1)
         ).scalar()
         wind_data = (
             {
@@ -397,7 +407,10 @@ def create_app() -> Flask:
         )
 
         recent_logs = db.session.execute(
-            db.select(Log).order_by(Log.id.desc()).limit(100)
+            db.select(Log)
+            .where(Log.datetime >= server_started_at)
+            .order_by(Log.id.desc())
+            .limit(100)
         ).scalars().all()
         logs_data = {}
         for lg in recent_logs:

@@ -674,11 +674,14 @@
 
         function applySensorStatus(sensor, logEntry, ageSeconds) {
             const st = resolveStatus(sensor, logEntry, ageSeconds);
-            setText(`age-${sensor}`, formatAge(ageSeconds));
+            setText(`age-${sensor}`, st.active ? formatAge(ageSeconds) : 'No data');
             setClass(`dot-${sensor}`, `dot ${st.dotClass}`.trim());
             setText(`status-${sensor}`, `Status: ${st.text}`);
             setClass(`status-${sensor}`, `status-line ${st.lineClass}`.trim());
-            return st.active ? (SENSOR_THRESHOLDS[sensor]?.intervalMs || 1500) : null;
+            return {
+                active: st.active,
+                intervalMs: st.active ? (SENSOR_THRESHOLDS[sensor]?.intervalMs || 1500) : null,
+            };
         }
 
         function updateTelemetry(data) {
@@ -692,6 +695,13 @@
                     const entry = gas[sp];
                     if (entry) {
                         ages.push(entry.age_seconds);
+                    }
+                }
+                const minAge = ages.length ? Math.min(...ages) : null;
+                const { active, intervalMs: ms } = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
+                for (const sp of inst.species) {
+                    const entry = active ? gas[sp] : null;
+                    if (entry) {
                         setText(`val-${sp}`, formatVal(entry.concentration));
                         setText(`unit-${sp}`, entry.unit || '');
                     } else {
@@ -699,8 +709,6 @@
                         setText(`unit-${sp}`, '');
                     }
                 }
-                const minAge = ages.length ? Math.min(...ages) : null;
-                const ms = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
                 if (ms !== null && (fastestActiveMs === null || ms < fastestActiveMs)) {
                     fastestActiveMs = ms;
                 }
@@ -709,10 +717,11 @@
             if (GPS_ENABLED) {
                 const loc = data.location;
                 const locAge = loc ? loc.age_seconds : null;
-                setText('gps-coords', loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
-                setText('gps-speed', loc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
-                const gpsMs = applySensorStatus('GPS', logs['GPS'], locAge);
+                const { active, intervalMs: gpsMs } = applySensorStatus('GPS', logs['GPS'], locAge);
                 const gpsStatus = resolveStatus('GPS', logs['GPS'], locAge);
+                const showLoc = active && loc;
+                setText('gps-coords', showLoc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
+                setText('gps-speed', showLoc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
                 gpsHasLiveFix = gpsStatus.dotClass === 'live';
                 if (gpsMs !== null && (fastestActiveMs === null || gpsMs < fastestActiveMs)) {
                     fastestActiveMs = gpsMs;
@@ -728,9 +737,10 @@
             if (WIND_ENABLED) {
                 const wind = data.wind;
                 const windAge = wind ? wind.age_seconds : null;
-                setText('wind-speed', wind ? wind.speed.toFixed(1) : '--');
-                setText('wind-dir', wind ? wind.heading.toFixed(0) : '--');
-                const windMs = applySensorStatus('Wind', logs['Wind'], windAge);
+                const { active, intervalMs: windMs } = applySensorStatus('Wind', logs['Wind'], windAge);
+                const showWind = active && wind;
+                setText('wind-speed', showWind ? wind.speed.toFixed(1) : '--');
+                setText('wind-dir', showWind ? wind.heading.toFixed(0) : '--');
                 if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
                     fastestActiveMs = windMs;
                 }
