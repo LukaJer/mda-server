@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime
 from itertools import cycle
@@ -14,7 +15,8 @@ class LocationMeasurementMock(MeasurementMock):
 
     def __init__(self):
         MeasurementMock.__init__(self)
-        self._track_points = self._load_mock_track("./tests/mock/mock_location_measurements.xml")
+        track_path = os.path.join(os.path.dirname(__file__), "mock_location_measurements.xml")
+        self._track_points = self._load_mock_track(track_path)
         self._measurement_thread = Thread(target=self._measurement_routine)
 
     def _load_mock_track(self, path: str) -> List[tuple]:

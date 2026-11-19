@@ -29,8 +29,12 @@ class MeasurementMock(ABC):
         pass
 
     def _post_measurement(self, measurement: any, path: str) -> None:
-        r = requests.post(
-            url=self.SERVER_URL + path,
-            json=measurement.serialize()
-        )
-        self.logger.info(f"POST {measurement} returned status code {r.status_code}")
+        try:
+            r = requests.post(
+                url=self.SERVER_URL + path,
+                json=measurement.serialize(),
+                timeout=5.0,
+            )
+            self.logger.info(f"POST {measurement} returned status code {r.status_code}")
+        except requests.RequestException as e:
+            self.logger.error(f"POST {measurement} failed: {e}")

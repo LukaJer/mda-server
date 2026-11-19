@@ -3,8 +3,10 @@ import csv
 import datetime
 import io
 import json
+import math
 import os
 import re
+import threading
 from configparser import ConfigParser
 from functools import wraps
 from typing import List
@@ -54,7 +56,7 @@ def serialize(func):
         except HttpException as error:
             return {"error": str(error)}, error.error_code
         except Exception as error:
-            return {"error": str(error)}
+            return {"error": str(error)}, 500
     return wrapper
 
 
@@ -81,7 +83,7 @@ def load_devices_config() -> dict:
 
 def get_db_config():
     config = ConfigParser()
-    config.read('config.ini')
+    config.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
     db_type = config.get('Database', 'type', fallback=None)
     db_location = config.get('Database', 'location', fallback='measurements.db')
     if db_type == 'memory':
@@ -120,50 +122,61 @@ def create_app() -> Flask:
         "wind": None,
         "logs": {},
     }
-    server_started_at = datetime.datetime.now()
+    live_cache_lock = threading.Lock()
+    startup_max_ids = {"gas": 0, "location": 0, "wind": 0, "log": 0}
 
     def _update_live_cache(measurement_type: str, m) -> None:
-        if measurement_type == "gas":
-            live_cache["gas"][m.type] = {
-                "concentration": m.concentration,
-                "unit": m.unit,
-                "datetime": m.datetime,
-            }
-        elif measurement_type == "location":
-            live_cache["location"] = {
-                "latitude": m.latitude,
-                "longitude": m.longitude,
-                "speed": m.speed,
-                "heading": m.heading,
-                "datetime": m.datetime,
-            }
-        elif measurement_type == "wind":
-            live_cache["wind"] = {
-                "speed": m.speed,
-                "heading": m.heading,
-                "datetime": m.datetime,
-            }
-        elif measurement_type == "log":
-            live_cache["logs"][m.sensor] = {
-                "description": m.description,
-                "datetime": m.datetime,
-            }
+        with live_cache_lock:
+            if measurement_type == "gas":
+                live_cache["gas"][m.type] = {
+                    "concentration": m.concentration,
+                    "unit": m.unit,
+                    "datetime": m.datetime,
+                }
+            elif measurement_type == "location":
+                live_cache["location"] = {
+                    "latitude": m.latitude,
+                    "longitude": m.longitude,
+                    "speed": m.speed,
+                    "heading": m.heading,
+                    "datetime": m.datetime,
+                }
+            elif measurement_type == "wind":
+                live_cache["wind"] = {
+                    "speed": m.speed,
+                    "heading": m.heading,
+                    "datetime": m.datetime,
+                }
+            elif measurement_type == "log":
+                live_cache["logs"][m.sensor] = {
+                    "description": m.description,
+                    "datetime": m.datetime,
+                }
 
     @app.post("/measurement/<measurement_type>")
     @timeit
     def post_measurement(measurement_type: str):
-        if request.is_json:
-            try:
-                measurement = measurement_type_look_up[measurement_type].create_from_json(request.get_json())
-                _update_live_cache(measurement_type, measurement)
-                if measurement_type != "log" and not app.config.get("ACCEPT_MEASUREMENT_DATA", True):
-                    return {"paused": True, "message": "Measurement recording is paused"}, 200
-                db.session.add(measurement)
-                db.session.commit()
-                return {"success": "Successfully added measurement to database"}, 201
-            except KeyError:
-                return {"error": "Invalid JSON or measurement type"}, 415
-        return {"error": "Request must be JSON"}, 415
+        if not request.is_json:
+            return {"error": "Request must be JSON"}, 415
+        model_cls = measurement_type_look_up.get(measurement_type)
+        if model_cls is None:
+            return {"error": "Invalid measurement type"}, 415
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return {"error": "Request must be a JSON object"}, 400
+        try:
+            measurement = model_cls.create_from_json(payload)
+        except (KeyError, ValueError, TypeError) as e:
+            return {"error": f"Invalid measurement payload: {e}"}, 400
+
+        if measurement_type != "log" and not app.config.get("ACCEPT_MEASUREMENT_DATA", True):
+            _update_live_cache(measurement_type, measurement)
+            return {"paused": True, "message": "Measurement recording is paused"}, 200
+
+        db.session.add(measurement)
+        db.session.commit()
+        _update_live_cache(measurement_type, measurement)
+        return {"success": "Successfully added measurement to database"}, 201
 
     @app.get("/measurement/log")
     @timeit
@@ -299,7 +312,9 @@ def create_app() -> Flask:
             description = ApiHelper.get_post_if_set(request.form["description"])
 
             if campaign_id:
-                edit_campaign = db.session.execute(db.select(Campaign).where(Campaign.id == campaign_id)).scalars().one()
+                edit_campaign = db.session.execute(db.select(Campaign).where(Campaign.id == campaign_id)).scalar()
+                if not edit_campaign:
+                    return {"error": "Campaign not found"}, 404
 
                 edit_campaign.start = start
                 edit_campaign.end = end
@@ -356,7 +371,7 @@ def create_app() -> Flask:
         # Scan only the most recent rows since server start
         recent_gases = db.session.execute(
             db.select(GasMeasurement)
-            .where(GasMeasurement.datetime >= server_started_at)
+            .where(GasMeasurement.id > startup_max_ids["gas"])
             .order_by(GasMeasurement.id.desc())
             .limit(300)
         ).scalars().all()
@@ -372,7 +387,7 @@ def create_app() -> Flask:
 
         latest_loc = db.session.execute(
             db.select(LocationMeasurement)
-            .where(LocationMeasurement.datetime >= server_started_at)
+            .where(LocationMeasurement.id > startup_max_ids["location"])
             .order_by(LocationMeasurement.id.desc())
             .limit(1)
         ).scalar()
@@ -391,7 +406,7 @@ def create_app() -> Flask:
 
         latest_wind = db.session.execute(
             db.select(WindMeasurement)
-            .where(WindMeasurement.datetime >= server_started_at)
+            .where(WindMeasurement.id > startup_max_ids["wind"])
             .order_by(WindMeasurement.id.desc())
             .limit(1)
         ).scalar()
@@ -408,7 +423,7 @@ def create_app() -> Flask:
 
         recent_logs = db.session.execute(
             db.select(Log)
-            .where(Log.datetime >= server_started_at)
+            .where(Log.id > startup_max_ids["log"])
             .order_by(Log.id.desc())
             .limit(100)
         ).scalars().all()
@@ -422,43 +437,44 @@ def create_app() -> Flask:
                 }
 
         # Overlay live_cache so paused instruments still show live readouts
-        for g_type, cached in live_cache["gas"].items():
-            db_entry = gas_data.get(g_type)
-            if db_entry is None or cached["datetime"].isoformat() >= db_entry["datetime"]:
-                gas_data[g_type] = {
-                    "concentration": cached["concentration"],
-                    "unit": cached["unit"],
-                    "datetime": cached["datetime"].isoformat(),
-                    "age_seconds": max(0.0, (now - cached["datetime"]).total_seconds()),
-                }
-        if live_cache["location"] is not None:
-            c_loc = live_cache["location"]
-            if loc_data is None or c_loc["datetime"].isoformat() >= loc_data["datetime"]:
-                loc_data = {
-                    "latitude": c_loc["latitude"],
-                    "longitude": c_loc["longitude"],
-                    "speed": c_loc["speed"],
-                    "heading": c_loc["heading"],
-                    "datetime": c_loc["datetime"].isoformat(),
-                    "age_seconds": max(0.0, (now - c_loc["datetime"]).total_seconds()),
-                }
-        if live_cache["wind"] is not None:
-            c_wind = live_cache["wind"]
-            if wind_data is None or c_wind["datetime"].isoformat() >= wind_data["datetime"]:
-                wind_data = {
-                    "speed": c_wind["speed"],
-                    "heading": c_wind["heading"],
-                    "datetime": c_wind["datetime"].isoformat(),
-                    "age_seconds": max(0.0, (now - c_wind["datetime"]).total_seconds()),
-                }
-        for sensor, c_log in live_cache["logs"].items():
-            db_log = logs_data.get(sensor)
-            if db_log is None or c_log["datetime"].isoformat() >= db_log["datetime"]:
-                logs_data[sensor] = {
-                    "description": c_log["description"],
-                    "datetime": c_log["datetime"].isoformat(),
-                    "age_seconds": max(0.0, (now - c_log["datetime"]).total_seconds()),
-                }
+        with live_cache_lock:
+            for g_type, cached in live_cache["gas"].items():
+                db_entry = gas_data.get(g_type)
+                if db_entry is None or cached["datetime"].isoformat() >= db_entry["datetime"]:
+                    gas_data[g_type] = {
+                        "concentration": cached["concentration"],
+                        "unit": cached["unit"],
+                        "datetime": cached["datetime"].isoformat(),
+                        "age_seconds": max(0.0, (now - cached["datetime"]).total_seconds()),
+                    }
+            if live_cache["location"] is not None:
+                c_loc = live_cache["location"]
+                if loc_data is None or c_loc["datetime"].isoformat() >= loc_data["datetime"]:
+                    loc_data = {
+                        "latitude": c_loc["latitude"],
+                        "longitude": c_loc["longitude"],
+                        "speed": c_loc["speed"],
+                        "heading": c_loc["heading"],
+                        "datetime": c_loc["datetime"].isoformat(),
+                        "age_seconds": max(0.0, (now - c_loc["datetime"]).total_seconds()),
+                    }
+            if live_cache["wind"] is not None:
+                c_wind = live_cache["wind"]
+                if wind_data is None or c_wind["datetime"].isoformat() >= wind_data["datetime"]:
+                    wind_data = {
+                        "speed": c_wind["speed"],
+                        "heading": c_wind["heading"],
+                        "datetime": c_wind["datetime"].isoformat(),
+                        "age_seconds": max(0.0, (now - c_wind["datetime"]).total_seconds()),
+                    }
+            for sensor, c_log in live_cache["logs"].items():
+                db_log = logs_data.get(sensor)
+                if db_log is None or c_log["datetime"].isoformat() >= db_log["datetime"]:
+                    logs_data[sensor] = {
+                        "description": c_log["description"],
+                        "datetime": c_log["datetime"].isoformat(),
+                        "age_seconds": max(0.0, (now - c_log["datetime"]).total_seconds()),
+                    }
 
         return jsonify({
             "server_time": now.isoformat(),
@@ -528,18 +544,23 @@ def create_app() -> Flask:
                 headers={'Content-Disposition': f'attachment; filename="{base_fname}.csv"'},
             )
 
+        def _finite_float(val):
+            if val is None:
+                return None
+            return val if math.isfinite(val) else None
+
         gas_by_type = {}
         for g in gases:
             loc = _nearest_location(g.datetime, loc_times, locs)
             gas_by_type.setdefault(g.type, []).append({
                 'datetime': g.datetime.isoformat(),
                 'type': g.type,
-                'concentration': g.concentration,
+                'concentration': _finite_float(g.concentration),
                 'unit': g.unit,
-                'latitude': loc.latitude if loc else None,
-                'longitude': loc.longitude if loc else None,
-                'heading': loc.heading if loc else None,
-                'speed': loc.speed if loc else None,
+                'latitude': _finite_float(loc.latitude) if loc else None,
+                'longitude': _finite_float(loc.longitude) if loc else None,
+                'heading': _finite_float(loc.heading) if loc else None,
+                'speed': _finite_float(loc.speed) if loc else None,
             })
 
         payload = {
@@ -555,14 +576,14 @@ def create_app() -> Flask:
             'wind': [
                 {
                     'datetime': w.datetime.isoformat(),
-                    'speed': w.speed,
-                    'heading': w.heading,
+                    'speed': _finite_float(w.speed),
+                    'heading': _finite_float(w.heading),
                 }
                 for w in winds
             ],
         }
         return Response(
-            json.dumps(payload, indent=2),
+            json.dumps(payload, indent=2, allow_nan=False),
             mimetype='application/json',
             headers={'Content-Disposition': f'attachment; filename="{base_fname}.json"'},
         )
@@ -572,7 +593,9 @@ def create_app() -> Flask:
         edit_campaign = db.session.execute(
             db.select(Campaign)
             .where(Campaign.id == campaign_id)
-        ).scalars().one()
+        ).scalar()
+        if not edit_campaign:
+            return redirect('/campaign')
 
         return render_template('campaign.html', campaign=edit_campaign)
 
@@ -581,7 +604,9 @@ def create_app() -> Flask:
         campaign: Campaign = db.session.execute(
             db.select(Campaign)
             .where(Campaign.id == campaign_id)
-        ).scalars().one()
+        ).scalar()
+        if not campaign:
+            return {"error": "Campaign not found"}, 404
 
         stats = [get_campaign_statistics_for_gas(gas, campaign) for gas in ['CH4', 'CO2']]
         return jsonify(stats)
@@ -591,7 +616,20 @@ def create_app() -> Flask:
         show_campaign = db.session.execute(db.select(Campaign).where(Campaign.id == campaign_id)).scalar()
         if not show_campaign:
             return redirect('/campaign')
-        return render_template('index.html', campaign=show_campaign, height=height, width=width)
+        end_dt = show_campaign.end or datetime.datetime.now()
+        available_species = db.session.execute(
+            db.select(GasMeasurement.type)
+            .where(GasMeasurement.datetime >= show_campaign.start)
+            .where(GasMeasurement.datetime <= end_dt)
+            .distinct()
+        ).scalars().all()
+        return render_template(
+            'index.html',
+            campaign=show_campaign,
+            height=height,
+            width=width,
+            available_species=available_species,
+        )
 
     @app.route('/windrose')
     def windrose():
@@ -666,6 +704,10 @@ def create_app() -> Flask:
             db.session.execute(db.text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_datetime ON {tbl} (datetime)"))
         db.session.execute(db.text("CREATE INDEX IF NOT EXISTS ix_gas_measurement_type_datetime ON gas_measurement (type, datetime)"))
         db.session.commit()
+        for key, model_cls in measurement_type_look_up.items():
+            startup_max_ids[key] = db.session.execute(
+                db.select(db.func.max(model_cls.id))
+            ).scalar() or 0
 
     return app
 

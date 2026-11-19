@@ -15,6 +15,7 @@ import { getUrlParameter, is_screenshot_mode, extractCampaignIdFromCurrentUrl, e
 import { getBaseConcentration } from './campaign-statistics';
 
 declare var campaign: Campaign;
+declare var availableSpecies: string[] | undefined;
 
 
 type RangeMode =
@@ -101,18 +102,23 @@ async function main() {
     var marker = L.marker([48.112167000, 11.583705000], {icon: NavigationIcon, rotationAngle: 0});
     var live_marker = L.marker([48.112167000, 11.583705000], {icon: LiveNavigationIcon, rotationAngle: 0});
 
-    const initial_gas = INITIAL_GAS;
+    const selector = document.getElementById('gas-selector') as HTMLSelectElement | null;
+    const initial_gas = (selector && selector.value) ? selector.value : INITIAL_GAS;
     const gas_slider = new Slider('gas-slider', map);
     
     const gas_display = new NumericDisplay('gas-concentration-display', initial_gas, unitFor(initial_gas));
 
     const campaign_id = extractCampaignIdFromCurrentUrl();
 
-    
-    const gas_layers: { [key: string]: { [key: string]: any } } = {};
-    let first_plotter: GasMeasurementPlotter | null = null;
+    const speciesKeys = (typeof availableSpecies !== 'undefined' && Array.isArray(availableSpecies) && availableSpecies.length > 0)
+        ? availableSpecies.filter(s => s in SPECIES)
+        : Object.keys(SPECIES);
+    const activeSpeciesKeys = speciesKeys.length > 0 ? speciesKeys : Object.keys(SPECIES);
 
-    for (const [name, cfg] of Object.entries(SPECIES)) {
+    const gas_layers: { [key: string]: { plotter: GasMeasurementPlotter } } = {};
+
+    for (const name of activeSpeciesKeys) {
+        const cfg = SPECIES[name];
         let min_value: number;
         let max_value: number;
 
@@ -131,21 +137,24 @@ async function main() {
         );
         plotter.startPlotting(1000);
         gas_layers[name] = { plotter: plotter };
-        if (first_plotter === null) {
-            first_plotter = plotter;
-        }
     }
 
     const wind_plotter = new WindMeasurementPlotter(map, campaign.start, campaign.end);
     wind_plotter.startPlotting(1000);
 
-    const focus_control = new FocusControl({ position: 'topleft' }, (focus: boolean) => first_plotter?.setFocus(focus));
+    const start_key = (initial_gas in gas_layers) ? initial_gas : Object.keys(gas_layers)[0];
+    let active_plotter: GasMeasurementPlotter | null = gas_layers[start_key]?.plotter ?? null;
+
+    const focus_control = new FocusControl({ position: 'topleft' }, (focus: boolean) => active_plotter?.setFocus(focus));
     const wind_control = new WindControl({ position: 'topleft' }, (show: boolean) => wind_plotter.show(show))
 
-    
-    const start_key = (initial_gas in gas_layers) ? initial_gas : Object.keys(gas_layers)[0];
-    gas_layers[start_key].plotter.show(true);
-    gas_slider.updateGasType(start_key, gas_layers[start_key].plotter.measurements);
+    if (active_plotter) {
+        active_plotter.show(true);
+        gas_slider.updateGasType(start_key, active_plotter.measurements);
+        if (start_key !== initial_gas) {
+            gas_display.changeGasType(start_key, unitFor(start_key));
+        }
+    }
 
 
 
@@ -153,11 +162,20 @@ async function main() {
         const target = event.target as HTMLSelectElement;
         const selectedLayerKey = target.value;
 
+        const wasFocused = active_plotter ? active_plotter.focus : false;
+        if (wasFocused && active_plotter) {
+            active_plotter.setFocus(false);
+        }
+
         Object.values(gas_layers).forEach(gas => gas.plotter.show(false));
 
         if (selectedLayerKey in gas_layers) {
-            gas_layers[selectedLayerKey].plotter.show(true);
-            gas_slider.updateGasType(selectedLayerKey, gas_layers[selectedLayerKey].plotter.measurements)
+            active_plotter = gas_layers[selectedLayerKey].plotter;
+            active_plotter.show(true);
+            if (wasFocused) {
+                active_plotter.setFocus(true);
+            }
+            gas_slider.updateGasType(selectedLayerKey, active_plotter.measurements)
             
             gas_display.changeGasType(selectedLayerKey, unitFor(selectedLayerKey));
         }

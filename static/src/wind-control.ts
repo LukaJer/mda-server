@@ -5,7 +5,7 @@ export class WindControl extends L.Control {
   private showCallback: (show: boolean) => void;
   private windIcon: WindIcon;
   private button!: HTMLAnchorElement;
-  private isActive = true;
+  private isActive = false;
 
   constructor(options: L.ControlOptions, showCallback: (focus: boolean) => void) {
     super(options);
@@ -25,6 +25,7 @@ export class WindControl extends L.Control {
     this.button.style.justifyContent = 'center';
 
     this.button.appendChild(this.windIcon.getElement());
+    this.updateColor();
 
 
     L.DomEvent.on(this.button, 'click', () => {
