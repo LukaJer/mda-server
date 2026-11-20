@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import threading
 from configparser import ConfigParser
 from functools import wraps
@@ -484,6 +485,107 @@ def create_app() -> Flask:
             "wind": wind_data,
             "logs": logs_data,
         })
+
+    @app.get('/api/logs')
+    def api_logs():
+        try:
+            limit = min(max(int(request.args.get('limit', 100)), 1), 500)
+        except ValueError:
+            limit = 100
+        sensor_filter = (request.args.get('sensor') or '').strip()
+        errors_only = request.args.get('errors_only', '').lower() in ('1', 'true', 'yes')
+
+        q = db.select(Log).order_by(Log.id.desc())
+        if sensor_filter:
+            q = q.where(Log.sensor == sensor_filter)
+        if errors_only:
+            q = q.where(
+                db.or_(
+                    Log.description.ilike('%error%'),
+                    Log.description.ilike('%fail%'),
+                    Log.description.ilike('%timeout%'),
+                    Log.description.ilike('%exception%'),
+                )
+            )
+        rows = db.session.execute(q.limit(limit)).scalars().all()
+
+        recent_sensors = sorted({
+            s for s in db.session.execute(
+                db.select(Log.sensor).order_by(Log.id.desc()).limit(300)
+            ).scalars().all()
+            if s
+        })
+
+        db_size_mb = None
+        db_uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+        if db_uri.startswith("sqlite:///") and db_uri != "sqlite:///:memory:":
+            rel_path = db_uri[len("sqlite:///"):]
+            candidates = [
+                rel_path,
+                os.path.join(app.instance_path, rel_path),
+                os.path.join(os.path.dirname(__file__), "instance", rel_path),
+            ]
+            for p in candidates:
+                if os.path.exists(p):
+                    db_size_mb = round(os.path.getsize(p) / (1024 * 1024), 2)
+                    break
+
+        return jsonify({
+            "recording_enabled": app.config.get("ACCEPT_MEASUREMENT_DATA", True),
+            "db_size_mb": db_size_mb,
+            "sensors": recent_sensors,
+            "logs": [
+                {
+                    "id": lg.id,
+                    "datetime": lg.datetime.isoformat(),
+                    "sensor": lg.sensor,
+                    "description": lg.description,
+                }
+                for lg in rows
+            ],
+        })
+
+    terminal_lock = threading.Lock()
+    terminal_state = {
+        "cwd": os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+    }
+
+    @app.post('/api/terminal')
+    def api_terminal():
+        payload = request.get_json(silent=True) or {}
+        cmd = (payload.get('command') or '').strip()
+        if not cmd:
+            return jsonify({"cwd": terminal_state["cwd"], "exit_code": 0, "stdout": "", "stderr": ""})
+
+        with terminal_lock:
+            cwd = terminal_state["cwd"]
+            if cmd == "cd" or cmd.startswith("cd "):
+                target = cmd[2:].strip() or os.path.expanduser("~")
+                new_dir = os.path.abspath(os.path.join(cwd, os.path.expanduser(target)))
+                if os.path.isdir(new_dir):
+                    terminal_state["cwd"] = new_dir
+                    return jsonify({"cwd": new_dir, "exit_code": 0, "stdout": "", "stderr": ""})
+                return jsonify({"cwd": cwd, "exit_code": 1, "stdout": "", "stderr": f"cd: no such directory: {target}\n"})
+
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    shell=True,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                return jsonify({
+                    "cwd": cwd,
+                    "exit_code": proc.returncode,
+                    "stdout": proc.stdout,
+                    "stderr": proc.stderr,
+                })
+            except subprocess.TimeoutExpired:
+                return jsonify({"cwd": cwd, "exit_code": 124, "stdout": "", "stderr": "Command timed out after 15s\n"})
+            except Exception as e:
+                return jsonify({"cwd": cwd, "exit_code": 1, "stdout": "", "stderr": f"{e}\n"})
 
     @app.get('/campaign/<int:campaign_id>/download')
     def campaign_download(campaign_id: int):

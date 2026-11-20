@@ -305,6 +305,100 @@
             border: 1px solid #fde68a;
             margin-left: 6px;
         }
+        /* Tabs & Diagnostics */
+        .header-right {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .tabs-bar {
+            display: inline-flex;
+            gap: 4px;
+        }
+        .tab-btn {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #ffffff;
+        }
+        .tab-panel { display: none; gap: 22px; }
+        .tab-panel.active { display: grid; }
+        .diag-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+        .diag-controls select {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 0.88rem;
+        }
+        .diag-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.88rem;
+            color: var(--text);
+            margin: 0;
+            cursor: pointer;
+        }
+        .log-msg-err { color: #f87171; }
+        .log-msg-warn { color: #fbbf24; }
+        .log-msg-ok { color: #4ade80; }
+        .diag-terminal {
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.82rem;
+            line-height: 1.5;
+            height: 62vh;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .diag-line { margin: 0; }
+        .diag-ts { color: #64748b; }
+        .diag-src { color: #38bdf8; font-weight: 600; }
+        .shell-form {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .shell-prompt {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.82rem;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .shell-input {
+            flex: 1;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #0f172a;
+            color: #f1f5f9;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.85rem;
+        }
         @media (max-width: 640px) {
             body {
                 padding: 12px 10px 32px;
@@ -340,11 +434,19 @@
             <div>
                 <h1>EnvBike — Mobile Data Acquisition</h1>
             </div>
-            <div class="pill">
-                <span class="dot" id="poll-dot"></span>
-                <span id="poll-status">Connecting...</span>
+            <div class="header-right">
+                <nav class="tabs-bar" role="tablist">
+                    <button type="button" class="tab-btn active" data-tab="dashboard">Dashboard</button>
+                    <button type="button" class="tab-btn" data-tab="diagnostics">Diagnostics</button>
+                </nav>
+                <div class="pill">
+                    <span class="dot" id="poll-dot"></span>
+                    <span id="poll-status">Connecting...</span>
+                </div>
             </div>
         </header>
+
+        <div id="tab-dashboard" class="tab-panel active">
 
         <!-- Active Campaign Banner (if any campaign has no end time) -->
         {% set active_campaigns = campaigns | selectattr('end', 'none') | list %}
@@ -503,6 +605,38 @@
             <p class="subtitle">No campaigns yet. Click <strong>Start Now</strong> above to begin recording.</p>
             {% endif %}
         </section>
+        </div> <!-- /#tab-dashboard -->
+
+        <div id="tab-diagnostics" class="tab-panel">
+            <section class="card">
+                <div class="diag-controls" style="justify-content:space-between;">
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+                        <select id="diag-sensor">
+                            <option value="">All sources</option>
+                        </select>
+                        <label class="diag-check">
+                            <input type="checkbox" id="diag-errors-only">
+                            Errors only
+                        </label>
+                    </div>
+                    <span class="subtitle" id="diag-meta"></span>
+                </div>
+                <div class="diag-terminal" id="diag-terminal">Loading logs...</div>
+            </section>
+
+            <section class="card">
+                <div class="diag-controls" style="justify-content:space-between;">
+                    <span style="font-weight:700;font-size:0.95rem;">Shell Terminal</span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="shell-clear">Clear</button>
+                </div>
+                <div class="diag-terminal" id="shell-output" style="height:32vh;">Ready. Type a command below.</div>
+                <form class="shell-form" id="shell-form">
+                    <span class="shell-prompt" id="shell-cwd">$</span>
+                    <input type="text" class="shell-input" id="shell-input" placeholder="e.g. systemctl status mdau_pub.service" autocomplete="off">
+                    <button type="submit" class="btn btn-primary btn-sm">Run</button>
+                </form>
+            </section>
+        </div>
     </div>
 
     <script>
@@ -812,6 +946,168 @@
             if (!document.hidden) {
                 clearTimeout(pollTimer);
                 pollLive();
+                if (activeTab === 'diagnostics') {
+                    clearTimeout(diagTimer);
+                    pollDiagnostics();
+                }
+            }
+        });
+
+        // Tabs & Diagnostics polling
+        let activeTab = 'dashboard';
+        let diagTimer = null;
+
+        function classifyLogMsg(desc) {
+            const lower = (desc || '').toLowerCase();
+            if (lower.includes('error') || lower.includes('fail') || lower.includes('timeout') || lower.includes('exception')) {
+                return 'log-msg-err';
+            }
+            if (lower.includes('warm') || lower.includes('waiting') || lower.includes('disconnected') || lower.includes('unconnected')) {
+                return 'log-msg-warn';
+            }
+            if (desc === 'OK') return 'log-msg-ok';
+            return '';
+        }
+
+        function formatLogTime(isoStr) {
+            const d = new Date(isoStr);
+            if (Number.isNaN(d.getTime())) return isoStr;
+            return d.toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false
+            });
+        }
+
+        async function pollDiagnostics() {
+            if (document.hidden || activeTab !== 'diagnostics') return;
+            const sensor = document.getElementById('diag-sensor').value;
+            const errorsOnly = document.getElementById('diag-errors-only').checked ? '1' : '0';
+            const params = new URLSearchParams({ limit: '150', errors_only: errorsOnly });
+            if (sensor) params.set('sensor', sensor);
+
+            try {
+                const resp = await fetch(`/api/logs?${params.toString()}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+
+                const sel = document.getElementById('diag-sensor');
+                const current = sel.value;
+                const opts = ['<option value="">All sources</option>']
+                    .concat((data.sensors || []).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`));
+                sel.innerHTML = opts.join('');
+                if ([...sel.options].some(o => o.value === current)) sel.value = current;
+
+                document.getElementById('diag-meta').textContent =
+                    data.db_size_mb !== null ? `DB: ${data.db_size_mb} MB` : '';
+
+                const term = document.getElementById('diag-terminal');
+                const atBottom = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
+                const ordered = [...(data.logs || [])].reverse();
+                if (!ordered.length) {
+                    term.textContent = '(no matching log entries)';
+                } else {
+                    term.innerHTML = ordered.map(lg => {
+                        const ts = escapeHtml(formatLogTime(lg.datetime));
+                        const src = escapeHtml(lg.sensor.padEnd(10, ' '));
+                        const msg = escapeHtml(lg.description);
+                        const cls = classifyLogMsg(lg.description);
+                        return `<div class="diag-line"><span class="diag-ts">${ts}</span> <span class="diag-src">[${src}]</span> <span class="${cls}">${msg}</span></div>`;
+                    }).join('');
+                    if (atBottom) term.scrollTop = term.scrollHeight;
+                }
+            } catch (err) {
+                document.getElementById('diag-terminal').textContent = '[error] failed to fetch /api/logs';
+            } finally {
+                clearTimeout(diagTimer);
+                if (!document.hidden && activeTab === 'diagnostics') {
+                    diagTimer = setTimeout(pollDiagnostics, 3000);
+                }
+            }
+        }
+
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeTab = btn.dataset.tab;
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${activeTab}`));
+                if (activeTab === 'diagnostics') {
+                    clearTimeout(diagTimer);
+                    pollDiagnostics();
+                } else {
+                    clearTimeout(diagTimer);
+                }
+            });
+        });
+
+        ['diag-sensor', 'diag-errors-only'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', () => {
+                clearTimeout(diagTimer);
+                pollDiagnostics();
+            });
+        });
+
+        // Interactive shell terminal
+        const shellHistory = [];
+        let shellHistIdx = -1;
+        const shellOut = document.getElementById('shell-output');
+        const shellInput = document.getElementById('shell-input');
+        const shellCwd = document.getElementById('shell-cwd');
+
+        function appendShell(html) {
+            if (shellOut.textContent === 'Ready. Type a command below.') {
+                shellOut.innerHTML = '';
+            }
+            shellOut.insertAdjacentHTML('beforeend', html);
+            shellOut.scrollTop = shellOut.scrollHeight;
+        }
+
+        document.getElementById('shell-clear')?.addEventListener('click', () => {
+            shellOut.textContent = '';
+        });
+
+        shellInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' && shellHistory.length) {
+                e.preventDefault();
+                shellHistIdx = shellHistIdx <= 0 ? shellHistory.length - 1 : shellHistIdx - 1;
+                shellInput.value = shellHistory[shellHistIdx];
+            } else if (e.key === 'ArrowDown' && shellHistory.length) {
+                e.preventDefault();
+                if (shellHistIdx >= shellHistory.length - 1) {
+                    shellHistIdx = shellHistory.length;
+                    shellInput.value = '';
+                } else {
+                    shellHistIdx += 1;
+                    shellInput.value = shellHistory[shellHistIdx];
+                }
+            }
+        });
+
+        document.getElementById('shell-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const cmd = shellInput.value.trim();
+            if (!cmd) return;
+            shellHistory.push(cmd);
+            shellHistIdx = shellHistory.length;
+            shellInput.value = '';
+            appendShell(`<div class="diag-line"><span class="diag-src">${escapeHtml(shellCwd.textContent)}</span> ${escapeHtml(cmd)}</div>`);
+            try {
+                const resp = await fetch('/api/terminal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: cmd }),
+                });
+                const res = await resp.json();
+                if (res.cwd) {
+                    const shortCwd = res.cwd.split('/').slice(-2).join('/') || '/';
+                    shellCwd.textContent = `${shortCwd}$`;
+                }
+                if (res.stdout) appendShell(`<div class="diag-line">${escapeHtml(res.stdout)}</div>`);
+                if (res.stderr) appendShell(`<div class="diag-line log-msg-err">${escapeHtml(res.stderr)}</div>`);
+                if (res.exit_code !== 0) {
+                    appendShell(`<div class="diag-line log-msg-warn">[exit ${res.exit_code}]</div>`);
+                }
+            } catch (err) {
+                appendShell(`<div class="diag-line log-msg-err">[request failed]</div>`);
             }
         });
 
