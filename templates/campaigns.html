@@ -680,6 +680,7 @@
             setClass(`status-${sensor}`, `status-line ${st.lineClass}`.trim());
             return {
                 active: st.active,
+                isOk: st.text === 'OK',
                 intervalMs: st.active ? (SENSOR_THRESHOLDS[sensor]?.intervalMs || 1500) : null,
             };
         }
@@ -698,9 +699,9 @@
                     }
                 }
                 const minAge = ages.length ? Math.min(...ages) : null;
-                const { active, intervalMs: ms } = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
+                const { isOk, intervalMs: ms } = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
                 for (const sp of inst.species) {
-                    const entry = active ? gas[sp] : null;
+                    const entry = isOk ? gas[sp] : null;
                     if (entry) {
                         setText(`val-${sp}`, formatVal(entry.concentration));
                         setText(`unit-${sp}`, entry.unit || '');
@@ -717,9 +718,9 @@
             if (GPS_ENABLED) {
                 const loc = data.location;
                 const locAge = loc ? loc.age_seconds : null;
-                const { active, intervalMs: gpsMs } = applySensorStatus('GPS', logs['GPS'], locAge);
+                const { isOk, intervalMs: gpsMs } = applySensorStatus('GPS', logs['GPS'], locAge);
                 const gpsStatus = resolveStatus('GPS', logs['GPS'], locAge);
-                const showLoc = active && loc;
+                const showLoc = isOk && loc;
                 setText('gps-coords', showLoc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
                 setText('gps-speed', showLoc ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
                 gpsHasLiveFix = gpsStatus.dotClass === 'live';
@@ -737,8 +738,8 @@
             if (WIND_ENABLED) {
                 const wind = data.wind;
                 const windAge = wind ? wind.age_seconds : null;
-                const { active, intervalMs: windMs } = applySensorStatus('Wind', logs['Wind'], windAge);
-                const showWind = active && wind;
+                const { isOk, intervalMs: windMs } = applySensorStatus('Wind', logs['Wind'], windAge);
+                const showWind = isOk && wind;
                 setText('wind-speed', showWind ? wind.speed.toFixed(1) : '--');
                 setText('wind-dir', showWind ? wind.heading.toFixed(0) : '--');
                 if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
