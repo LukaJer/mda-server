@@ -50,21 +50,21 @@ export class Slider {
             const dateKeys = Array.from(this.data_map.keys());
             const selectedDate = dateKeys[index];
             const data = this.data_map.get(selectedDate);
+            if (!data) return;
+
             const pop_up_content = `${selectedDate}<br>${this.gas_name}: <b>${data.concentration.toFixed(3)}</b>${data.unit}`
     
-            if (data) {
-                if (this.popup) {
-                    this.popup.setLatLng([data.latitude, data.longitude])
-                              .setContent(pop_up_content)
-                              .openOn(this.map);
-                } else {
-                    this.popup = L.popup()
-                                 .setLatLng([data.latitude, data.longitude])
-                                 .setContent(pop_up_content)
-                                 .openOn(this.map);
-                }
-                this.map.panTo(new L.LatLng(data.latitude, data.longitude));
+            if (this.popup) {
+                this.popup.setLatLng([data.latitude, data.longitude])
+                          .setContent(pop_up_content)
+                          .openOn(this.map);
+            } else {
+                this.popup = L.popup()
+                             .setLatLng([data.latitude, data.longitude])
+                             .setContent(pop_up_content)
+                             .openOn(this.map);
             }
+            this.map.panTo(new L.LatLng(data.latitude, data.longitude));
         }
     }
 }

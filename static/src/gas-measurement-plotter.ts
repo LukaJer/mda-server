@@ -105,8 +105,10 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     setFocus(focus: boolean): void {
         this.focus = focus;
         if (this.focus) {
-            this.map.dragging.disable()
-            this.map.panTo(new L.LatLng(this.previous_measurement.latitude, this.previous_measurement.longitude));
+            this.map.dragging.disable();
+            if (this.previous_measurement && Number.isFinite(this.previous_measurement.latitude) && Number.isFinite(this.previous_measurement.longitude)) {
+                this.map.panTo(new L.LatLng(this.previous_measurement.latitude, this.previous_measurement.longitude));
+            }
         } else {
             this.map.dragging.enable();
         }

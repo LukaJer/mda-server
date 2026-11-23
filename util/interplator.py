@@ -35,27 +35,35 @@ class Interpolator:
 
         if len(unique_locs) == 1:
             loc0 = unique_locs[0]
+            lat = float(loc0.latitude)
+            lon = float(loc0.longitude)
+            if not (np.isfinite(lat) and np.isfinite(lon)):
+                return []
+            hdg = float(loc0.heading) % 360
+            spd = float(loc0.speed)
+            safe_hdg = hdg if np.isfinite(hdg) else 0.0
+            safe_spd = spd if np.isfinite(spd) else 0.0
             ts0 = timestamps[0]
             out = []
             for m in measurements:
                 if abs(m.datetime.timestamp() - ts0) <= Interpolator.MAX_INTERPOLATION_DISTANCE:
                     out.append(interpolated_measurement_type.create_from_measurement_and_location(
                         measurement=m,
-                        heading=float(loc0.heading) % 360,
-                        speed=float(loc0.speed),
-                        latitude=float(loc0.latitude),
-                        longitude=float(loc0.longitude),
+                        heading=safe_hdg,
+                        speed=safe_spd,
+                        latitude=lat,
+                        longitude=lon,
                     ))
             return out
 
         latitudes = [loc.latitude for loc in unique_locs]
         longitudes = [loc.longitude for loc in unique_locs]
-        headings = [loc.heading for loc in unique_locs]
+        headings_rad = np.unwrap(np.deg2rad([loc.heading for loc in unique_locs]))
         speeds = [loc.speed for loc in unique_locs]
 
         interpolate_latitude = scipy.interpolate.interp1d(timestamps, latitudes, fill_value='extrapolate')
         interpolate_longitude = scipy.interpolate.interp1d(timestamps, longitudes, fill_value='extrapolate')
-        interpolate_heading = scipy.interpolate.interp1d(timestamps, headings, fill_value='extrapolate')
+        interpolate_heading_rad = scipy.interpolate.interp1d(timestamps, headings_rad, fill_value='extrapolate')
         interpolate_speed = scipy.interpolate.interp1d(timestamps, speeds, fill_value='extrapolate')
 
         interpolated_measurements = []
@@ -64,7 +72,7 @@ class Interpolator:
             if Interpolator._timestamp_is_within_region(timestamps, m_ts):
                 lat = float(interpolate_latitude(m_ts))
                 lon = float(interpolate_longitude(m_ts))
-                hdg = float(interpolate_heading(m_ts)) % 360
+                hdg = float(np.rad2deg(interpolate_heading_rad(m_ts))) % 360
                 spd = float(interpolate_speed(m_ts))
                 if not (np.isfinite(lat) and np.isfinite(lon)):
                     continue

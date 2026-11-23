@@ -183,7 +183,7 @@ Map Display
             {% set active_list = available_species if available_species else ['NO', 'NO2', 'NOx', 'O3', 'CO', 'PM10', 'PM4', 'PM2.5', 'PM1'] %}
             <select name="gas-selector" id="gas-selector">
                 {% for val, label in all_species %}
-                <option value="{{ val }}" {% if loop.first %}selected{% endif %}>{{ val }}</option>
+                <option value="{{ val }}" {% if active_list and val == active_list[0] %}selected{% endif %}>{{ val }}</option>
                 {% endfor %}
             </select>
             <div class="gas-pills" id="gas-pills" role="tablist" aria-label="Gas and PM species">
@@ -203,6 +203,7 @@ Map Display
         start: new Date("{{campaign.start.isoformat()}}"),
         end: {% if campaign.end %} new Date("{{campaign.end.isoformat()}}"){% else %} null{% endif %}
     };
+    var availableSpecies = {{ active_list | tojson }};
 
     (function () {
         const selector = document.getElementById('gas-selector');
@@ -227,14 +228,7 @@ Map Display
 
         // Select the first available species in this campaign (important for legacy CH4/CO2 campaigns)
         if (pills.length > 0) {
-            const firstGas = pills[0].dataset.gas;
-            setActivePill(firstGas);
-            window.addEventListener('load', () => {
-                if (selector.value !== firstGas) {
-                    selector.value = firstGas;
-                    selector.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            });
+            setActivePill(selector.value);
         }
 
         // Auto-hide short-data warning on live campaigns once >= 120s of data is recorded
