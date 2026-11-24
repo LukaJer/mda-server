@@ -1248,32 +1248,44 @@
         }
 
         let tileCacheTimer = null;
+        let tileCacheActive = false;
         async function pollTileCacheStatus() {
+            clearTimeout(tileCacheTimer);
             const progEl = document.getElementById('tile-cache-progress');
             const btnStart = document.getElementById('btn-cache-tiles');
             const btnCancel = document.getElementById('btn-cancel-cache');
             try {
                 const resp = await fetch('/api/map-tiles/cache/status');
-                if (!resp.ok) return;
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const st = await resp.json();
                 if (st.running) {
+                    tileCacheActive = true;
                     btnStart.disabled = true;
                     btnCancel.style.display = 'inline-flex';
                     progEl.textContent = `${st.message} ${st.done.toLocaleString()} / ${st.total.toLocaleString()} (new: ${st.downloaded}, failed: ${st.failed})`;
-                    clearTimeout(tileCacheTimer);
-                    tileCacheTimer = setTimeout(pollTileCacheStatus, 1500);
+                    if (activeTab === 'settings' || tileCacheActive) {
+                        tileCacheTimer = setTimeout(pollTileCacheStatus, 1500);
+                    }
                 } else {
+                    const wasActive = tileCacheActive;
+                    tileCacheActive = false;
                     btnStart.disabled = false;
                     btnCancel.style.display = 'none';
                     if (st.total > 0) {
                         progEl.textContent = `${st.message}: ${st.done.toLocaleString()} / ${st.total.toLocaleString()} (new: ${st.downloaded}, failed: ${st.failed})`;
-                        loadSettingsUI();
+                    }
+                    if (wasActive) {
+                        loadSettingsUI(false);
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                if (activeTab === 'settings' || tileCacheActive) {
+                    tileCacheTimer = setTimeout(pollTileCacheStatus, 2500);
+                }
+            }
         }
 
-        async function loadSettingsUI() {
+        async function loadSettingsUI(checkCacheStatus = true) {
             try {
                 const [sResp, tResp] = await Promise.all([
                     fetch('/api/settings'),
@@ -1298,6 +1310,9 @@
                     if (czEl) czEl.textContent = `Cached on disk — ${zoomParts.join(' · ')}`;
                 }
             } catch (e) {}
+            if (checkCacheStatus) {
+                pollTileCacheStatus();
+            }
         }
 
         populateSettingsForm(INITIAL_SETTINGS);
@@ -1338,6 +1353,7 @@
                     progEl.textContent = res.error || `HTTP ${resp.status}`;
                     return;
                 }
+                tileCacheActive = true;
                 pollTileCacheStatus();
             } catch (err) {
                 progEl.textContent = 'Failed to start tile download';

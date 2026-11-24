@@ -18,6 +18,7 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     private maximum_concentration: number;
     private unit: string;           
     private legend: L.Control;
+    private is_visible: boolean = false;
 
 
     constructor(
@@ -49,7 +50,9 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     }
 
     drawMeasurement(measurement: any) {
-        this.updateMarkerPosition(measurement);
+        if (this.is_visible) {
+            this.updateMarkerPosition(measurement);
+        }
         this.addMeasurementToLayer(measurement);
         if (this.slider.gas_name == this.gas_name) {
             this.slider.updateSliderMax();
@@ -60,41 +63,68 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     }
 
     updateMarkerPosition(measurement: any) {
-        this.marker.setRotationAngle(measurement.heading);
-        this.marker.setLatLng([measurement.latitude, measurement.longitude]);
+        if (Number.isFinite(measurement.latitude) && Number.isFinite(measurement.longitude)) {
+            if (Number.isFinite(measurement.heading)) {
+                this.marker.setRotationAngle(measurement.heading);
+            }
+            this.marker.setLatLng([measurement.latitude, measurement.longitude]);
+        }
     }
 
     addMeasurementToLayer(measurement: any) {
-        const feature: Feature = {
-            "type": "Feature",
-            "properties": {
-                "type": measurement.type,
-                "datetime": measurement.datetime,
-                "concentration": measurement.concentration,
-                "unit": measurement.unit,
-            },
-            "geometry": {
-                "type": "LineString", "coordinates": [[measurement.longitude, measurement.latitude], [this.previous_measurement.longitude, this.previous_measurement.latitude]]
-            }
-        };
+        if (!Number.isFinite(measurement.latitude) || !Number.isFinite(measurement.longitude)) {
+            return;
+        }
 
         const color = this.getColor(measurement.concentration);
 
-        L.geoJson(feature, {
-            style: function () {
-                return {
-                    "color": color,
-                    "opacity": 1,
-                    "weight": 7
+        if (
+            this.previous_measurement !== null &&
+            Number.isFinite(this.previous_measurement.latitude) &&
+            Number.isFinite(this.previous_measurement.longitude)
+        ) {
+            const feature: Feature = {
+                "type": "Feature",
+                "properties": {
+                    "type": measurement.type,
+                    "datetime": measurement.datetime,
+                    "concentration": measurement.concentration,
+                    "unit": measurement.unit,
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [measurement.longitude, measurement.latitude],
+                        [this.previous_measurement.longitude, this.previous_measurement.latitude]
+                    ]
                 }
-            },
-            onEachFeature: function (feature, layer) {
-                if (feature.properties) {
-                    layer.bindPopup(`${feature.properties.datetime}<br>${feature.properties.type}: <b>${feature.properties.concentration}</b>${feature.properties.unit}`);
-                }
-            }
+            };
 
-        }).addTo(this.gas_measurement_layer);
+            L.geoJson(feature, {
+                style: function () {
+                    return {
+                        "color": color,
+                        "opacity": 1,
+                        "weight": 7
+                    }
+                },
+                onEachFeature: function (feature, layer) {
+                    if (feature.properties) {
+                        layer.bindPopup(`${feature.properties.datetime}<br>${feature.properties.type}: <b>${feature.properties.concentration}</b>${feature.properties.unit}`);
+                    }
+                }
+            }).addTo(this.gas_measurement_layer);
+        } else {
+            const pointMarker = L.circleMarker([measurement.latitude, measurement.longitude], {
+                radius: 4,
+                color: color,
+                fillColor: color,
+                fillOpacity: 1,
+                weight: 1,
+            });
+            pointMarker.bindPopup(`${measurement.datetime}<br>${measurement.type}: <b>${measurement.concentration}</b>${measurement.unit}`);
+            pointMarker.addTo(this.gas_measurement_layer);
+        }
 
         if (this.focus) {
             this.map.panTo(new L.LatLng(measurement.latitude, measurement.longitude));
@@ -167,9 +197,16 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     }
 
     show(show: boolean) {
+        if (this.is_visible === show) {
+            return;
+        }
+        this.is_visible = show;
         if (show) {
             this.map.addLayer(this.gas_measurement_layer);
             this.map.addControl(this.legend);
+            if (this.previous_measurement) {
+                this.updateMarkerPosition(this.previous_measurement);
+            }
         } else {
             this.map.removeLayer(this.gas_measurement_layer);
             this.map.removeControl(this.legend);

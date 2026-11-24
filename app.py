@@ -14,6 +14,7 @@ from typing import List
 
 from flask import Flask, Response, request, jsonify, render_template, redirect, send_file
 import numpy as np
+from sqlalchemy import event
 
 from models.average_wind_measurement_with_location import AverageWindMeasurementWithLocation
 from models.base_model import db
@@ -212,8 +213,12 @@ def create_app() -> Flask:
             _update_live_cache(measurement_type, measurement)
             return {"paused": True, "message": "Measurement recording is paused"}, 200
 
-        db.session.add(measurement)
-        db.session.commit()
+        try:
+            db.session.add(measurement)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return {"error": f"Database error: {e}"}, 500
         _update_live_cache(measurement_type, measurement)
         return {"success": "Successfully added measurement to database"}, 201
 
@@ -240,13 +245,15 @@ def create_app() -> Flask:
         measurement_request = Request(request.args)
         measurements = WindMeasurement.get_data(measurement_request)
 
-        if not measurement_request.with_location:
+        if not measurement_request.with_location or not measurements:
             return measurements
 
+        buf = datetime.timedelta(seconds=Interpolator.MAX_INTERPOLATION_DISTANCE)
         locations = LocationMeasurement.get_data(
             measurement_request,
-            15,
-            datetime.timedelta(seconds=Interpolator.MAX_INTERPOLATION_DISTANCE)
+            apply_limit=False,
+            start_datetime=measurements[0].datetime - buf,
+            end_datetime=measurements[-1].datetime + buf,
         )
         measurements_with_locations = Interpolator.interpolate_measurements(
             measurements, locations, WindMeasurementWithLocation)
@@ -263,12 +270,15 @@ def create_app() -> Flask:
         measurement_request = Request(request.args)
         measurements = GasMeasurement.get_data(measurement_request)
 
-        if not measurement_request.with_location:
+        if not measurement_request.with_location or not measurements:
             return measurements
+
+        buf = datetime.timedelta(seconds=Interpolator.MAX_INTERPOLATION_DISTANCE)
         locations = LocationMeasurement.get_data(
             measurement_request,
-            15,
-            datetime.timedelta(seconds=Interpolator.MAX_INTERPOLATION_DISTANCE)
+            apply_limit=False,
+            start_datetime=measurements[0].datetime - buf,
+            end_datetime=measurements[-1].datetime + buf,
         )
 
         measurements_with_locations = Interpolator.interpolate_measurements(
@@ -301,12 +311,15 @@ def create_app() -> Flask:
             .where(GasMeasurement.datetime <= end_dt)
         ).one()
         data_span = (max_dt - min_dt).total_seconds() if (min_dt and max_dt) else 0.0
-        available_species = db.session.execute(
-            db.select(GasMeasurement.type)
-            .where(GasMeasurement.datetime >= show_campaign.start)
-            .where(GasMeasurement.datetime <= end_dt)
-            .distinct()
-        ).scalars().all()
+        if show_campaign.end is None:
+            available_species = None
+        else:
+            available_species = db.session.execute(
+                db.select(GasMeasurement.type)
+                .where(GasMeasurement.datetime >= show_campaign.start)
+                .where(GasMeasurement.datetime <= end_dt)
+                .distinct()
+            ).scalars().all()
         return render_template(
             'index.html',
             campaign=show_campaign,
@@ -592,8 +605,15 @@ def create_app() -> Flask:
 
     @app.post('/api/terminal')
     def api_terminal():
-        payload = request.get_json(silent=True) or {}
-        cmd = (payload.get('command') or '').strip()
+        if os.environ.get("MDA_ENABLE_TERMINAL") != "1" and request.remote_addr not in ("127.0.0.1", "::1"):
+            return {"error": "Terminal access is disabled"}, 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return {"error": "Request must be a JSON object"}, 400
+        raw_cmd = payload.get('command')
+        if raw_cmd is not None and not isinstance(raw_cmd, str):
+            return {"error": "Command must be a string"}, 400
+        cmd = (raw_cmd or '').strip()
         if not cmd:
             return jsonify({"cwd": terminal_state["cwd"], "exit_code": 0, "stdout": "", "stderr": ""})
 
@@ -742,8 +762,14 @@ def create_app() -> Flask:
         import requests as _requests
         from PIL import Image
 
-        payload = request.get_json(silent=True) or {}
-        m = payload.get("map") or load_settings()["map"]
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return {"error": "Request must be a JSON object"}, 400
+        m = payload.get("map")
+        if m is None:
+            m = load_settings()["map"]
+        elif not isinstance(m, dict):
+            return {"error": "Invalid map configuration"}, 400
         layers = [l for l in m.get("cached_layers", []) if l in ("Local", "LocalG")]
         if not layers:
             return {"error": "Select at least one offline layer to cache"}, 400
@@ -757,6 +783,13 @@ def create_app() -> Flask:
             zooms = sorted({int(z) for z in m.get("cache_zooms", []) if 1 <= int(z) <= 19})
         except (KeyError, TypeError, ValueError):
             return {"error": "Invalid bounding box or zoom levels"}, 400
+        if not (
+            math.isfinite(bbox["lat_min"]) and math.isfinite(bbox["lat_max"])
+            and math.isfinite(bbox["lon_min"]) and math.isfinite(bbox["lon_max"])
+            and -85.0511 <= bbox["lat_min"] <= bbox["lat_max"] <= 85.0511
+            and -180.0 <= bbox["lon_min"] <= bbox["lon_max"] <= 180.0
+        ):
+            return {"error": "Bounding box coordinates out of valid Web Mercator bounds"}, 400
         if not zooms:
             return {"error": "Select at least one zoom level"}, 400
 
@@ -784,6 +817,8 @@ def create_app() -> Flask:
 
         def worker():
             headers = {"User-Agent": "EnvBike-MDA/1.0 (offline field cache)"}
+            session = _requests.Session()
+            session.headers.update(headers)
             try:
                 for z, xmin, xmax, ymin, ymax in ranges:
                     for x in range(xmin, xmax + 1):
@@ -798,39 +833,56 @@ def create_app() -> Flask:
                             need_gray = want_gray and not os.path.isfile(gray_path)
 
                             if need_color or need_gray:
-                                img_bytes = None
-                                if os.path.isfile(color_path):
-                                    with open(color_path, "rb") as f:
-                                        img_bytes = f.read()
-                                else:
-                                    _time.sleep(0.06)
-                                    try:
-                                        r = _requests.get(f"https://tile.openstreetmap.org/{z}/{x}/{y}.png", headers=headers, timeout=10)
+                                tile_ok = False
+                                try:
+                                    img_bytes = None
+                                    if os.path.isfile(color_path):
+                                        with open(color_path, "rb") as f:
+                                            img_bytes = f.read()
+                                    else:
+                                        _time.sleep(0.06)
+                                        r = session.get(
+                                            f"https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                                            timeout=10,
+                                        )
                                         if r.status_code == 200:
                                             img_bytes = r.content
-                                    except _requests.RequestException:
-                                        img_bytes = None
 
-                                if img_bytes:
-                                    if need_color:
-                                        os.makedirs(os.path.dirname(color_path), exist_ok=True)
-                                        with open(color_path, "wb") as f:
-                                            f.write(img_bytes)
-                                    if need_gray:
-                                        os.makedirs(os.path.dirname(gray_path), exist_ok=True)
-                                        im = Image.open(io.BytesIO(img_bytes)).convert("L")
-                                        im.save(gray_path, format="PNG")
-                                    with tile_cache_lock:
-                                        tile_cache_state["downloaded"] += (1 if need_color else 0) + (1 if need_gray else 0)
-                                else:
-                                    with tile_cache_lock:
-                                        tile_cache_state["failed"] += (1 if need_color else 0) + (1 if need_gray else 0)
+                                    if img_bytes:
+                                        with Image.open(io.BytesIO(img_bytes)) as im:
+                                            im.load()
+                                            if need_color:
+                                                os.makedirs(os.path.dirname(color_path), exist_ok=True)
+                                                tmp_color = f"{color_path}.tmp"
+                                                with open(tmp_color, "wb") as f:
+                                                    f.write(img_bytes)
+                                                os.replace(tmp_color, color_path)
+                                            if need_gray:
+                                                os.makedirs(os.path.dirname(gray_path), exist_ok=True)
+                                                tmp_gray = f"{gray_path}.tmp"
+                                                gray_im = im.convert("L")
+                                                gray_im.save(tmp_gray, format="PNG")
+                                                os.replace(tmp_gray, gray_path)
+                                        tile_ok = True
+                                except Exception:
+                                    tile_ok = False
+
+                                with tile_cache_lock:
+                                    delta = (1 if need_color else 0) + (1 if need_gray else 0)
+                                    if tile_ok:
+                                        tile_cache_state["downloaded"] += delta
+                                    else:
+                                        tile_cache_state["failed"] += delta
 
                             with tile_cache_lock:
                                 tile_cache_state["done"] += len(layers)
                 with tile_cache_lock:
                     tile_cache_state["message"] = "Done"
+            except Exception as e:
+                with tile_cache_lock:
+                    tile_cache_state["message"] = f"Error: {e}"
             finally:
+                session.close()
                 with tile_cache_lock:
                     tile_cache_state["running"] = False
 
@@ -1063,6 +1115,13 @@ def create_app() -> Flask:
         return redirect('/campaign')
 
     with app.app_context():
+        if db.engine.dialect.name == "sqlite":
+            @event.listens_for(db.engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                cursor.execute("PRAGMA busy_timeout=5000;")
+                cursor.close()
         db.create_all()
         for tbl in ('gas_measurement', 'location_measurement', 'wind_measurement'):
             db.session.execute(db.text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_datetime ON {tbl} (datetime)"))
@@ -1080,4 +1139,4 @@ if __name__ == "__main__":
     app = create_app()
     app.run(
         host="0.0.0.0",
-        debug=True)
+        debug=os.environ.get("FLASK_DEBUG") == "1")

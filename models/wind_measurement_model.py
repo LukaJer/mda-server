@@ -4,7 +4,7 @@ from sqlalchemy import DateTime, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base_model import db
-from util.api_helper import Request
+from util.api_helper import ApiHelper, Request
 
 
 class WindMeasurement(db.Model):
@@ -16,7 +16,7 @@ class WindMeasurement(db.Model):
     @staticmethod
     def create_from_json(json: dict) -> "WindMeasurement":
         return WindMeasurement(
-                datetime=datetime.fromisoformat(json["datetime"]),
+                datetime=ApiHelper.parse_iso_datetime(json["datetime"]),
                 heading=float(json["heading"]),
                 speed=float(json["speed"])
             )

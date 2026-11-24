@@ -76,19 +76,14 @@ export class MeasurementPlotter {
     }
 
     plotData(data: any[]): void {
-        var new_measurements: Boolean = false;
+        let new_measurements = false;
         data.forEach((measurement) => {
-            if (this.previous_measurement === null) {
-                this.previous_measurement = measurement;
+            if (!this.measurements.has(measurement.datetime)) {
+                this.start_datetime = new Date(measurement.datetime);
                 this.measurements.set(measurement.datetime, measurement);
-            } else {
-                if (!this.measurements.has(measurement.datetime)) {
-                    this.start_datetime = new Date(measurement.datetime);
-                    this.drawMeasurement(measurement);
-                    this.previous_measurement = measurement;
-                    this.measurements.set(measurement.datetime, measurement);
-                    new_measurements = true;
-                }
+                this.drawMeasurement(measurement);
+                this.previous_measurement = measurement;
+                new_measurements = true;
             }
         });
 
@@ -108,8 +103,10 @@ export class MeasurementPlotter {
         const hours = String(datetime.getHours()).padStart(2, '0');
         const minutes = String(datetime.getMinutes()).padStart(2, '0');
         const seconds = String(datetime.getSeconds()).padStart(2, '0');
+        const milliseconds = datetime.getMilliseconds();
+        const frac = milliseconds > 0 ? `.${String(milliseconds).padStart(3, '0')}` : '';
 
-        const formatted_string = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+        const formatted_string = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${frac}`;
         return formatted_string;
     }
 

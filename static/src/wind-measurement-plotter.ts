@@ -55,20 +55,13 @@ export class WindMeasurementPlotter extends MeasurementPlotter {
     plotData(data: any[]): void {
         let new_measurements = false;
         data.forEach((measurement: any) => {
-            if (this.previous_measurement === null){
+            if (!this.measurements.has(measurement.end_datetime)) {
+                this.start_datetime = new Date(measurement.end_datetime);
+                this.measurements.set(measurement.end_datetime, measurement);
+                this.drawMeasurement(measurement);
                 this.previous_measurement = measurement;
-                if (!this.measurements.has(measurement.end_datetime)) {
-                    new_measurements = true;
-                }
-            } else {
-                if (!this.measurements.has(measurement.end_datetime)){
-                    this.start_datetime = new Date(measurement.end_datetime);
-                    this.drawMeasurement(measurement);
-                    this.previous_measurement = measurement;
-                    new_measurements = true;
-                }
+                new_measurements = true;
             }
-            this.measurements.set(measurement.end_datetime, measurement);
         });
 
         if (!new_measurements) {

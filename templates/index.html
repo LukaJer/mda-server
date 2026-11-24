@@ -180,10 +180,26 @@ Map Display
                 ('PM10', 'PM10'), ('PM4', 'PM4'), ('PM2.5', 'PM2.5'), ('PM1', 'PM1'),
                 ('CH4', 'CH₄'), ('CH4-LI', 'CH₄-LI'), ('CO2', 'CO₂'), ('CO2-LI', 'CO₂-LI'), ('H2O', 'H₂O')
             ] %}
-            {% set active_list = available_species if available_species else ['NO', 'NO2', 'NOx', 'O3', 'CO', 'PM10', 'PM4', 'PM2.5', 'PM1'] %}
+            {% set all_keys = all_species | map(attribute=0) | list %}
+            {% set default_species = ['NO', 'NO2', 'NOx', 'O3', 'CO', 'PM10', 'PM4', 'PM2.5', 'PM1'] %}
+            {% set ns = namespace(known_available=[], default_gas=none) %}
+            {% if available_species %}
+                {% for s in available_species %}
+                    {% if s in all_keys %}
+                        {% set ns.known_available = ns.known_available + [s] %}
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+            {% if campaign.end is none %}
+                {% set active_list = all_keys %}
+                {% set ns.default_gas = ns.known_available[0] if ns.known_available else all_keys[0] %}
+            {% else %}
+                {% set active_list = ns.known_available if ns.known_available else default_species %}
+                {% set ns.default_gas = active_list[0] %}
+            {% endif %}
             <select name="gas-selector" id="gas-selector">
                 {% for val, label in all_species %}
-                <option value="{{ val }}" {% if active_list and val == active_list[0] %}selected{% endif %}>{{ val }}</option>
+                <option value="{{ val }}" {% if val == ns.default_gas %}selected{% endif %}>{{ val }}</option>
                 {% endfor %}
             </select>
             <div class="gas-pills" id="gas-pills" role="tablist" aria-label="Gas and PM species">
@@ -229,6 +245,10 @@ Map Display
 
         // Select the first available species in this campaign (important for legacy CH4/CO2 campaigns)
         if (pills.length > 0) {
+            const hasPill = Array.from(pills).some(p => p.dataset.gas === selector.value);
+            if (!hasPill) {
+                selector.value = pills[0].dataset.gas;
+            }
             setActivePill(selector.value);
         }
 

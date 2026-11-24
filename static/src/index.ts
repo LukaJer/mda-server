@@ -173,6 +173,10 @@ async function main() {
         gas_slider.updateGasType(start_key, active_plotter.measurements);
         if (start_key !== initial_gas) {
             gas_display.changeGasType(start_key, unitFor(start_key));
+            if (selector && Array.from(selector.options).some(opt => opt.value === start_key)) {
+                selector.value = start_key;
+                selector.dispatchEvent(new Event('change', { bubbles: false }));
+            }
         }
     }
 
@@ -198,6 +202,9 @@ async function main() {
             gas_slider.updateGasType(selectedLayerKey, active_plotter.measurements)
             
             gas_display.changeGasType(selectedLayerKey, unitFor(selectedLayerKey));
+            if (active_plotter.previous_measurement && Number.isFinite(active_plotter.previous_measurement.concentration)) {
+                gas_display.updateValue(active_plotter.previous_measurement.concentration);
+            }
         }
     });
 
@@ -207,7 +214,9 @@ async function main() {
 
 
     if (is_screenshot_mode()) {
-        addWindroseToMap(map, campaign);
+        addWindroseToMap(map, campaign).catch((error) => {
+            console.error('Failed to add windrose to map:', error);
+        });
         const show_wind = getUrlParameter("wind", "false");
         if (show_wind == "true") {
             wind_plotter.show(true);

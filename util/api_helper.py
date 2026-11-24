@@ -24,7 +24,7 @@ class Request:
     def get_datetime(datetime_iso: str) -> datetime | None:
         if datetime_iso is None:
             return None
-        return datetime.strptime(datetime_iso, '%Y-%m-%dT%H:%M:%S')
+        return ApiHelper.parse_iso_datetime(datetime_iso)
 
     @staticmethod
     def get_bool(val: str, compare: str) -> bool:
@@ -61,3 +61,11 @@ class ApiHelper:
             return datetime.fromisoformat(val)
         except ValueError:
             return None
+
+    @staticmethod
+    def parse_iso_datetime(value: str) -> datetime:
+        """Parse an ISO-8601 datetime string and normalize aware timestamps to naive local time."""
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt

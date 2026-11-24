@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import math
 from typing import List
 
 from sqlalchemy import DateTime, Float
@@ -31,7 +32,11 @@ class AverageWindMeasurementWithLocation(db.Model):
         middle_latitude = measurements[int(n_measurements/2)].latitude
         middle_longitude = measurements[int(n_measurements / 2)].longitude
 
-        avg_heading = sum(m.heading for m in measurements)/n_measurements
+        sin_sum = sum(math.sin(math.radians(m.heading)) for m in measurements)
+        cos_sum = sum(math.cos(math.radians(m.heading)) for m in measurements)
+        avg_heading = math.degrees(math.atan2(sin_sum, cos_sum)) % 360.0
+        if avg_heading >= 360.0:
+            avg_heading = 0.0
         avg_speed = sum(m.speed for m in measurements)/n_measurements
 
         return AverageWindMeasurementWithLocation(
@@ -47,7 +52,7 @@ class AverageWindMeasurementWithLocation(db.Model):
     @staticmethod
     def calculate_average_measurements(measurements: List[WindMeasurementWithLocation], t: timedelta
                                        ) -> List["AverageWindMeasurementWithLocation"]:
-        if len(measurements) <= 1:
+        if not measurements:
             return []
 
         averaged_measurements = []
@@ -58,6 +63,8 @@ class AverageWindMeasurementWithLocation(db.Model):
                 sub_group = [measurement]
             else:
                 sub_group.append(measurement)
+        if sub_group:
+            averaged_measurements.append(AverageWindMeasurementWithLocation.create_from_list(sub_group, t))
         return averaged_measurements
 
     def serialize(self) -> dict:

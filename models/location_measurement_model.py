@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta
+from typing import Optional
 
 from sqlalchemy import DateTime, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base_model import db
-from util.api_helper import Request
+from util.api_helper import ApiHelper, Request
 
 
 class LocationMeasurement(db.Model):
@@ -19,7 +20,7 @@ class LocationMeasurement(db.Model):
     @staticmethod
     def create_from_json(json: dict) -> "LocationMeasurement":
         return LocationMeasurement(
-            datetime=datetime.fromisoformat(json["datetime"]),
+            datetime=ApiHelper.parse_iso_datetime(json["datetime"]),
             latitude=float(json["latitude"]),
             longitude=float(json["longitude"]),
             accuracy=float(json["accuracy"]),
@@ -47,21 +48,34 @@ class LocationMeasurement(db.Model):
                 f"speed={self.speed})")
 
     @staticmethod
-    def get_data(request: Request, additional_limit: int = 0, buffer: timedelta = None):
-        if request.start_datetime is None:
+    def get_data(
+        request: Optional[Request],
+        additional_limit: int = 0,
+        buffer: timedelta = None,
+        apply_limit: bool = True,
+        start_datetime: Optional[datetime] = None,
+        end_datetime: Optional[datetime] = None,
+    ):
+        effective_start = start_datetime if start_datetime is not None else (request.start_datetime if request else None)
+        if effective_start is None:
             raise Exception("Invalid request! 'start-date' and 'start-time' must be given")
 
-        start_datetime = request.start_datetime - buffer if buffer else request.start_datetime
-        end_datetime = request.end_datetime + buffer if buffer and request.end_datetime else request.end_datetime
+        effective_end = end_datetime if end_datetime is not None else (request.end_datetime if request else None)
+        if buffer:
+            effective_start = effective_start - buffer
+            if effective_end is not None:
+                effective_end = effective_end + buffer
 
         def query(measurement):
             q = (db.select(measurement)
                  .order_by(measurement.datetime.asc())
-                 .where(measurement.datetime >= start_datetime)
-                 .limit(request.limit + additional_limit))
+                 .where(measurement.datetime >= effective_start))
 
-            if end_datetime is not None:
-                q = q.where(measurement.datetime <= end_datetime)
+            if apply_limit and request is not None and request.limit is not None:
+                q = q.limit(request.limit + additional_limit)
+
+            if effective_end is not None:
+                q = q.where(measurement.datetime <= effective_end)
 
             return q
 
