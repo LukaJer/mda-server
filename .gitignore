@@ -168,3 +168,4 @@ static/package-lock.json
 
 # Map tiles
 static/tiles
+*.mbtiles
