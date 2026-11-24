@@ -5,6 +5,12 @@ body {
     padding: 0;
 }
 
+.leaflet-gl-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
 #control-panel {
     position: fixed;
     bottom: 0;

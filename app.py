@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import threading
 from configparser import ConfigParser
@@ -82,8 +83,84 @@ def default_settings() -> dict:
                 "lon_max": 11.72,
             },
             "cache_zooms": [14, 15, 16, 17],
+            "tile_source_url": "http://127.0.0.1:8080/tile/{z}/{x}/{y}.png",
+            "active_mbtiles": "planet_11.337_48.047_b531ac7e.mbtiles",
+            "mbtiles_descriptions": {},
         }
     }
+
+
+MAPS_DIR = os.path.join(os.path.dirname(__file__), "static", "maps")
+_MBTILES_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.mbtiles$")
+
+
+def _read_mbtiles_info(filename: str, descriptions: dict | None = None) -> dict | None:
+    if not _MBTILES_NAME_RE.match(filename):
+        return None
+    path = os.path.join(MAPS_DIR, filename)
+    if not os.path.isfile(path):
+        return None
+    meta = {}
+    tile_count = 0
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            meta = dict(conn.execute("SELECT name, value FROM metadata").fetchall())
+            tile_count = int(conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+    try:
+        size_mb = round(os.path.getsize(path) / (1024 * 1024), 2)
+    except OSError:
+        size_mb = 0.0
+
+    custom_desc = (descriptions or {}).get(filename)
+    meta_desc = (meta.get("description") or "").strip()
+    desc = custom_desc if isinstance(custom_desc, str) and custom_desc.strip() else meta_desc
+    try:
+        minzoom = int(meta.get("minzoom", 0))
+    except (TypeError, ValueError):
+        minzoom = 0
+    try:
+        maxzoom = int(meta.get("maxzoom", 14))
+    except (TypeError, ValueError):
+        maxzoom = 14
+
+    return {
+        "filename": filename,
+        "name": (meta.get("name") or filename).strip(),
+        "description": desc,
+        "format": (meta.get("format") or "pbf").strip().lower(),
+        "minzoom": minzoom,
+        "maxzoom": maxzoom,
+        "bounds": meta.get("bounds") or "",
+        "tile_count": tile_count,
+        "size_mb": size_mb,
+    }
+
+
+def _list_mbtiles(settings_map: dict | None = None) -> list[dict]:
+    if not os.path.isdir(MAPS_DIR):
+        return []
+    descriptions = (settings_map or {}).get("mbtiles_descriptions")
+    items = []
+    for fname in sorted(os.listdir(MAPS_DIR)):
+        info = _read_mbtiles_info(fname, descriptions if isinstance(descriptions, dict) else None)
+        if info is not None:
+            items.append(info)
+    return items
+
+
+def _is_valid_tile_source_url(url: object) -> bool:
+    return (
+        isinstance(url, str)
+        and url.strip().startswith(("http://", "https://"))
+        and "{z}" in url
+        and "{x}" in url
+        and "{y}" in url
+    )
 
 
 def load_settings() -> dict:
@@ -320,12 +397,23 @@ def create_app() -> Flask:
                 .where(GasMeasurement.datetime <= end_dt)
                 .distinct()
             ).scalars().all()
+        m_settings = dict(load_settings()["map"])
+        mbtiles_list = _list_mbtiles(m_settings)
+        active_name = m_settings.get("active_mbtiles") or ""
+        active_info = next((x for x in mbtiles_list if x["filename"] == active_name), None)
+        if active_info is None and mbtiles_list:
+            active_info = mbtiles_list[0]
+        m_settings["active_mbtiles_info"] = active_info
+        tiles_root = os.path.join(os.path.dirname(__file__), "static", "tiles")
+        m_settings["has_local_png"] = os.path.isdir(os.path.join(tiles_root, "osm"))
+        m_settings["has_local_gray_png"] = os.path.isdir(os.path.join(tiles_root, "osm_grayscale"))
+
         return render_template(
             'index.html',
             campaign=show_campaign,
             short_data=(data_span < 120.0),
             available_species=available_species,
-            map_settings=load_settings()["map"],
+            map_settings=m_settings,
         )
 
     @app.route('/campaign',  methods=['POST', 'GET'])
@@ -660,9 +748,21 @@ def create_app() -> Flask:
         current = load_settings()
         if isinstance(payload.get("map"), dict):
             m = payload["map"]
-            valid_layers = {"OSM", "Local", "LocalG"}
+            valid_layers = {"OSM", "Local", "LocalG", "MBTiles", "MBTilesG"}
             if m.get("default_layer") in valid_layers:
                 current["map"]["default_layer"] = m["default_layer"]
+            if "active_mbtiles" in m:
+                am = m.get("active_mbtiles")
+                if am == "" or (isinstance(am, str) and _MBTILES_NAME_RE.match(am)):
+                    current["map"]["active_mbtiles"] = am
+                else:
+                    return {"error": "Invalid active_mbtiles filename"}, 400
+            if isinstance(m.get("mbtiles_descriptions"), dict):
+                descs = dict(current["map"].get("mbtiles_descriptions") or {})
+                for k, v in m["mbtiles_descriptions"].items():
+                    if isinstance(k, str) and _MBTILES_NAME_RE.match(k) and isinstance(v, str):
+                        descs[k] = v.strip()
+                current["map"]["mbtiles_descriptions"] = descs
             if isinstance(m.get("cached_layers"), list):
                 current["map"]["cached_layers"] = [
                     l for l in m["cached_layers"] if l in ("Local", "LocalG")
@@ -686,9 +786,62 @@ def create_app() -> Flask:
                     current["map"]["cache_zooms"] = zooms
                 except (TypeError, ValueError):
                     return {"error": "Invalid cache_zooms"}, 400
+            if "tile_source_url" in m:
+                t_url = (m.get("tile_source_url") or "").strip() if isinstance(m.get("tile_source_url"), str) else ""
+                if not _is_valid_tile_source_url(t_url):
+                    return {"error": "Tile source URL must start with http:// or https:// and include {z}, {x}, {y}"}, 400
+                current["map"]["tile_source_url"] = t_url
 
         save_settings(current)
         return jsonify({"status": "saved", "settings": current})
+
+    @app.get('/api/offline-maps')
+    def api_offline_maps():
+        m_settings = load_settings()["map"]
+        return jsonify({
+            "active_mbtiles": m_settings.get("active_mbtiles") or "",
+            "maps": _list_mbtiles(m_settings),
+        })
+
+    @app.get('/tiles/mbtiles/<map_name>/<int:z>/<int:x>/<int:y>.<ext>')
+    def serve_mbtiles_tile(map_name: str, z: int, x: int, y: int, ext: str):
+        if not _MBTILES_NAME_RE.match(map_name):
+            return {"error": "Invalid map name"}, 400
+        path = os.path.join(MAPS_DIR, map_name)
+        if not os.path.isfile(path):
+            return {"error": "Map not found"}, 404
+        tms_y = (1 << z) - 1 - y
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?",
+                    (z, x, tms_y),
+                ).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            return {"error": f"MBTiles read error: {e}"}, 500
+
+        if not row or row[0] is None:
+            return ("", 404)
+
+        data = bytes(row[0])
+        ext_lower = ext.lower()
+        mime_map = {
+            "pbf": "application/x-protobuf",
+            "mvt": "application/x-protobuf",
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "webp": "image/webp",
+        }
+        mimetype = mime_map.get(ext_lower, "application/octet-stream")
+        resp = Response(data, status=200, mimetype=mimetype)
+        if ext_lower in ("pbf", "mvt") and len(data) >= 2 and data[:2] == b"\x1f\x8b":
+            resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Cache-Control"] = "public, max-age=86400"
+        return resp
 
     @app.get('/api/map-tiles/status')
     def api_map_tiles_status():
@@ -758,9 +911,12 @@ def create_app() -> Flask:
 
     @app.post('/api/map-tiles/cache')
     def api_map_tiles_cache():
+        import hashlib as _hashlib
         import time as _time
         import requests as _requests
         from PIL import Image
+
+        OSM_BLOCKED_TILE_SHA256 = "109722facb0459991ce2c9983b3ae40232e84be7273aaa454071b50049e3d88b"
 
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
@@ -770,6 +926,9 @@ def create_app() -> Flask:
             m = load_settings()["map"]
         elif not isinstance(m, dict):
             return {"error": "Invalid map configuration"}, 400
+        tile_source_url = (m.get("tile_source_url") or load_settings()["map"].get("tile_source_url") or "").strip()
+        if not _is_valid_tile_source_url(tile_source_url):
+            return {"error": "Tile source URL must start with http:// or https:// and include {z}, {x}, {y}"}, 400
         layers = [l for l in m.get("cached_layers", []) if l in ("Local", "LocalG")]
         if not layers:
             return {"error": "Select at least one offline layer to cache"}, 400
@@ -841,11 +1000,27 @@ def create_app() -> Flask:
                                             img_bytes = f.read()
                                     else:
                                         _time.sleep(0.06)
-                                        r = session.get(
-                                            f"https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                                            timeout=10,
+                                        tile_url = (
+                                            tile_source_url
+                                            .replace("{z}", str(z))
+                                            .replace("{x}", str(x))
+                                            .replace("{y}", str(y))
                                         )
-                                        if r.status_code == 200:
+                                        r = session.get(tile_url, timeout=10)
+                                        if r.status_code in (403, 429):
+                                            with tile_cache_lock:
+                                                tile_cache_state["failed"] += (1 if need_color else 0) + (1 if need_gray else 0)
+                                                tile_cache_state["done"] += len(layers)
+                                                tile_cache_state["message"] = f"Blocked/Rate-limited by tile server (HTTP {r.status_code})"
+                                            return
+                                        ctype = r.headers.get("Content-Type", "").lower()
+                                        if r.status_code == 200 and ctype.startswith("image/"):
+                                            if _hashlib.sha256(r.content).hexdigest() == OSM_BLOCKED_TILE_SHA256:
+                                                with tile_cache_lock:
+                                                    tile_cache_state["failed"] += (1 if need_color else 0) + (1 if need_gray else 0)
+                                                    tile_cache_state["done"] += len(layers)
+                                                    tile_cache_state["message"] = "Tile server returned an 'Access blocked' placeholder tile"
+                                                return
                                             img_bytes = r.content
 
                                     if img_bytes:
@@ -899,6 +1074,78 @@ def create_app() -> Flask:
         with tile_cache_lock:
             tile_cache_state["cancel"] = True
             return jsonify({"status": "cancelling"})
+
+    @app.post('/api/map-tiles/clear')
+    def api_map_tiles_clear():
+        import shutil
+
+        with tile_cache_lock:
+            if tile_cache_state["running"]:
+                return {"error": "Cannot clear cache while tile download is running"}, 409
+
+        payload = request.get_json(silent=True)
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return {"error": "Invalid JSON payload"}, 400
+
+        raw_layers = payload.get("layers")
+        if not isinstance(raw_layers, list):
+            return {"error": "Select at least one layer to clear"}, 400
+        layers = [l for l in raw_layers if l in ("Local", "LocalG")]
+        if not layers:
+            return {"error": "Select at least one valid layer (Local or LocalG)"}, 400
+
+        raw_zooms = payload.get("zooms")
+        zooms = None
+        if raw_zooms is not None:
+            if not isinstance(raw_zooms, list):
+                return {"error": "Invalid zoom levels"}, 400
+            if len(raw_zooms) > 0:
+                try:
+                    zooms = sorted({int(z) for z in raw_zooms if 1 <= int(z) <= 19})
+                except (TypeError, ValueError):
+                    return {"error": "Invalid zoom levels"}, 400
+                if not zooms:
+                    return {"error": "Invalid zoom levels"}, 400
+
+        folder_map = {"Local": "osm", "LocalG": "osm_grayscale"}
+        tiles_root = os.path.join(os.path.dirname(__file__), "static", "tiles")
+        deleted_tiles = 0
+        freed_bytes = 0
+
+        for label in layers:
+            layer_dir = os.path.join(tiles_root, folder_map[label])
+            if not os.path.isdir(layer_dir):
+                continue
+            target_dirs = (
+                [os.path.join(layer_dir, str(z)) for z in zooms]
+                if zooms is not None
+                else [layer_dir]
+            )
+            for tdir in target_dirs:
+                if not os.path.isdir(tdir):
+                    continue
+                for root_dir, _, files in os.walk(tdir):
+                    for fname in files:
+                        if fname.endswith(".png"):
+                            deleted_tiles += 1
+                            try:
+                                freed_bytes += os.path.getsize(os.path.join(root_dir, fname))
+                            except OSError:
+                                pass
+                shutil.rmtree(tdir, ignore_errors=True)
+            if os.path.isdir(layer_dir) and not os.listdir(layer_dir):
+                try:
+                    os.rmdir(layer_dir)
+                except OSError:
+                    pass
+
+        return jsonify({
+            "status": "cleared",
+            "deleted_tiles": deleted_tiles,
+            "freed_mb": round(freed_bytes / (1024 * 1024), 2),
+        })
 
     @app.get('/campaign/<int:campaign_id>/download')
     def campaign_download(campaign_id: int):

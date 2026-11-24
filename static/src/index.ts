@@ -1,8 +1,11 @@
 import './livemap.css';
 import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 import * as L from 'leaflet';
 import 'leaflet-rotatedmarker';
+import maplibreGL from '@maplibre/maplibre-gl-leaflet';
+import { buildVectorStyle, MBTilesInfo } from './mbtiles-style';
 import { GasMeasurementPlotter } from './gas-measurement-plotter';
 import { WindMeasurementPlotter } from './wind-measurement-plotter';
 import { FocusControl } from './focus-control';
@@ -16,7 +19,12 @@ import { getBaseConcentration } from './campaign-statistics';
 
 declare var campaign: Campaign;
 declare var availableSpecies: string[] | undefined;
-declare var mapSettings: { default_layer?: string } | undefined;
+declare var mapSettings: {
+    default_layer?: string;
+    active_mbtiles_info?: MBTilesInfo | null;
+    has_local_png?: boolean;
+    has_local_gray_png?: boolean;
+} | undefined;
 
 
 type RangeMode =
@@ -74,17 +82,58 @@ async function main() {
     map.attributionControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors');
 
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19});
-    const osm_local = L.tileLayer('/static/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 19});
-    const osm_local_grayscale = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19});
 
-    const tile_layers: { [key: string]: L.TileLayer } = {
+    const tile_layers: { [key: string]: L.Layer } = {
         "OSM": osm,
-        "Local": osm_local,
-        "LocalG": osm_local_grayscale
     };
+    if (typeof mapSettings !== 'undefined' && mapSettings?.has_local_png) {
+        tile_layers["Local"] = L.tileLayer('/static/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 19});
+    }
+    if (typeof mapSettings !== 'undefined' && mapSettings?.has_local_gray_png) {
+        tile_layers["LocalG"] = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19});
+    }
+    const mbtilesInfo = typeof mapSettings !== 'undefined' ? mapSettings?.active_mbtiles_info : null;
+    if (mbtilesInfo && mbtilesInfo.filename) {
+        const fmt = (mbtilesInfo.format || 'pbf').toLowerCase();
+        const origin = window.location.origin;
+        if (fmt === 'pbf' || fmt === 'mvt') {
+            try {
+                const tileUrl = `${origin}/tiles/mbtiles/${encodeURIComponent(mbtilesInfo.filename)}/{z}/{x}/{y}.pbf`;
+                const minz = mbtilesInfo.minzoom ?? 0;
+                const maxz = mbtilesInfo.maxzoom ?? 14;
+                const colorGl = maplibreGL({
+                    style: buildVectorStyle(tileUrl, minz, maxz, false),
+                    interactive: false,
+                });
+                const grayGl = maplibreGL({
+                    style: buildVectorStyle(tileUrl, minz, maxz, true),
+                    interactive: false,
+                });
+                colorGl.on('add', () => {
+                    colorGl.getMaplibreMap()?.on('error', (e: any) => console.error('MBTiles error:', e?.error || e));
+                });
+                grayGl.on('add', () => {
+                    grayGl.getMaplibreMap()?.on('error', (e: any) => console.error('MBTilesG error:', e?.error || e));
+                });
+                tile_layers["MBTiles"] = colorGl;
+                tile_layers["MBTilesG"] = grayGl;
+            } catch (err) {
+                console.error('Failed to initialize MBTiles vector layers:', err);
+            }
+        } else {
+            const tileUrl = `/tiles/mbtiles/${encodeURIComponent(mbtilesInfo.filename)}/{z}/{x}/{y}.${fmt}`;
+            const rasterLayer = L.tileLayer(tileUrl, {
+                minZoom: mbtilesInfo.minzoom ?? 0,
+                maxZoom: 19,
+                maxNativeZoom: mbtilesInfo.maxzoom ?? 18,
+            });
+            tile_layers["MBTiles"] = rasterLayer;
+            tile_layers["MBTilesG"] = rasterLayer;
+        }
+    }
     const defaultLayerKey = (typeof mapSettings !== 'undefined' && mapSettings?.default_layer && tile_layers[mapSettings.default_layer])
         ? mapSettings.default_layer
-        : "OSM";
+        : (tile_layers["MBTiles"] ? "MBTiles" : "OSM");
     tile_layers[defaultLayerKey].addTo(map);
 
 
