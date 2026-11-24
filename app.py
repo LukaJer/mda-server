@@ -64,6 +64,44 @@ def serialize(func):
 DEVICES_CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "devices.json")
 )
+SETTINGS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "settings.json")
+)
+
+
+def default_settings() -> dict:
+    return {
+        "map": {
+            "default_layer": "OSM",
+            "cached_layers": ["LocalG"],
+            "cache_bbox": {
+                "lat_min": 48.06,
+                "lat_max": 48.22,
+                "lon_min": 11.45,
+                "lon_max": 11.72,
+            },
+            "cache_zooms": [14, 15, 16, 17],
+        }
+    }
+
+
+def load_settings() -> dict:
+    base = default_settings()
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("map"), dict):
+            base["map"].update(data["map"])
+            if isinstance(data["map"].get("cache_bbox"), dict):
+                base["map"]["cache_bbox"].update(data["map"]["cache_bbox"])
+    except (OSError, json.JSONDecodeError):
+        pass
+    return base
+
+
+def save_settings(settings: dict) -> None:
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
 
 def load_devices_config() -> dict:
@@ -274,6 +312,7 @@ def create_app() -> Flask:
             campaign=show_campaign,
             short_data=(data_span < 120.0),
             available_species=available_species,
+            map_settings=load_settings()["map"],
         )
 
     @app.route('/campaign',  methods=['POST', 'GET'])
@@ -300,6 +339,7 @@ def create_app() -> Flask:
                 campaigns=campaigns,
                 short_campaigns=short_campaigns,
                 devices_config=load_devices_config(),
+                settings=load_settings(),
                 now=now,
                 enable_measurements=app.config["ACCEPT_MEASUREMENT_DATA"])
         else:
@@ -587,6 +627,227 @@ def create_app() -> Flask:
             except Exception as e:
                 return jsonify({"cwd": cwd, "exit_code": 1, "stdout": "", "stderr": f"{e}\n"})
 
+    @app.get('/api/settings')
+    def api_get_settings():
+        return jsonify(load_settings())
+
+    @app.post('/api/settings')
+    def api_post_settings():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return {"error": "Request must be a JSON object"}, 400
+
+        current = load_settings()
+        if isinstance(payload.get("map"), dict):
+            m = payload["map"]
+            valid_layers = {"OSM", "Local", "LocalG"}
+            if m.get("default_layer") in valid_layers:
+                current["map"]["default_layer"] = m["default_layer"]
+            if isinstance(m.get("cached_layers"), list):
+                current["map"]["cached_layers"] = [
+                    l for l in m["cached_layers"] if l in ("Local", "LocalG")
+                ]
+            if isinstance(m.get("cache_bbox"), dict):
+                try:
+                    bbox = m["cache_bbox"]
+                    current["map"]["cache_bbox"] = {
+                        "lat_min": float(bbox["lat_min"]),
+                        "lat_max": float(bbox["lat_max"]),
+                        "lon_min": float(bbox["lon_min"]),
+                        "lon_max": float(bbox["lon_max"]),
+                    }
+                except (KeyError, TypeError, ValueError):
+                    return {"error": "Invalid cache_bbox coordinates"}, 400
+            if isinstance(m.get("cache_zooms"), list):
+                try:
+                    zooms = sorted({
+                        int(z) for z in m["cache_zooms"] if 1 <= int(z) <= 19
+                    })
+                    current["map"]["cache_zooms"] = zooms
+                except (TypeError, ValueError):
+                    return {"error": "Invalid cache_zooms"}, 400
+
+        save_settings(current)
+        return jsonify({"status": "saved", "settings": current})
+
+    @app.get('/api/map-tiles/status')
+    def api_map_tiles_status():
+        tiles_root = os.path.join(os.path.dirname(__file__), "static", "tiles")
+        layers = {}
+        for label, folder in (("Local", "osm"), ("LocalG", "osm_grayscale")):
+            folder_path = os.path.join(tiles_root, folder)
+            count = 0
+            total_bytes = 0
+            zooms = {}
+            if os.path.isdir(folder_path):
+                for z_entry in sorted(os.listdir(folder_path), key=lambda s: int(s) if s.isdigit() else 999):
+                    z_path = os.path.join(folder_path, z_entry)
+                    if not os.path.isdir(z_path) or not z_entry.isdigit():
+                        continue
+                    z_count = 0
+                    z_bytes = 0
+                    for root_dir, _, files in os.walk(z_path):
+                        for fname in files:
+                            if fname.endswith(".png"):
+                                z_count += 1
+                                try:
+                                    z_bytes += os.path.getsize(os.path.join(root_dir, fname))
+                                except OSError:
+                                    pass
+                    if z_count > 0:
+                        zooms[z_entry] = {
+                            "count": z_count,
+                            "size_mb": round(z_bytes / (1024 * 1024), 2),
+                        }
+                    count += z_count
+                    total_bytes += z_bytes
+            layers[label] = {
+                "count": count,
+                "size_mb": round(total_bytes / (1024 * 1024), 2),
+                "zooms": zooms,
+            }
+        return jsonify({"layers": layers})
+
+    tile_cache_lock = threading.Lock()
+    tile_cache_state = {
+        "running": False,
+        "cancel": False,
+        "total": 0,
+        "done": 0,
+        "downloaded": 0,
+        "failed": 0,
+        "message": "Idle",
+    }
+
+    def _deg2num(lat_deg: float, lon_deg: float, zoom: int):
+        lat_rad = math.radians(lat_deg)
+        n = 2.0 ** zoom
+        xtile = int((lon_deg + 180.0) / 360.0 * n)
+        ytile = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
+        return xtile, ytile
+
+    def _tile_ranges(bbox: dict, zooms: list):
+        ranges = []
+        for z in zooms:
+            x0, y1 = _deg2num(bbox["lat_min"], bbox["lon_min"], z)
+            x1, y0 = _deg2num(bbox["lat_max"], bbox["lon_max"], z)
+            xmin, xmax = min(x0, x1), max(x0, x1)
+            ymin, ymax = min(y0, y1), max(y0, y1)
+            ranges.append((z, xmin, xmax, ymin, ymax))
+        return ranges
+
+    @app.post('/api/map-tiles/cache')
+    def api_map_tiles_cache():
+        import time as _time
+        import requests as _requests
+        from PIL import Image
+
+        payload = request.get_json(silent=True) or {}
+        m = payload.get("map") or load_settings()["map"]
+        layers = [l for l in m.get("cached_layers", []) if l in ("Local", "LocalG")]
+        if not layers:
+            return {"error": "Select at least one offline layer to cache"}, 400
+        try:
+            bbox = {
+                "lat_min": float(m["cache_bbox"]["lat_min"]),
+                "lat_max": float(m["cache_bbox"]["lat_max"]),
+                "lon_min": float(m["cache_bbox"]["lon_min"]),
+                "lon_max": float(m["cache_bbox"]["lon_max"]),
+            }
+            zooms = sorted({int(z) for z in m.get("cache_zooms", []) if 1 <= int(z) <= 19})
+        except (KeyError, TypeError, ValueError):
+            return {"error": "Invalid bounding box or zoom levels"}, 400
+        if not zooms:
+            return {"error": "Select at least one zoom level"}, 400
+
+        ranges = _tile_ranges(bbox, zooms)
+        total_tiles = sum((xmax - xmin + 1) * (ymax - ymin + 1) for _, xmin, xmax, ymin, ymax in ranges)
+        if total_tiles > 50000:
+            return {"error": f"Too many tiles ({total_tiles:,}); reduce zoom or area (max 50,000 tiles)"}, 400
+
+        with tile_cache_lock:
+            if tile_cache_state["running"]:
+                return {"error": "Tile download already running"}, 409
+            tile_cache_state.update({
+                "running": True,
+                "cancel": False,
+                "total": total_tiles * len(layers),
+                "done": 0,
+                "downloaded": 0,
+                "failed": 0,
+                "message": "Downloading tiles...",
+            })
+
+        tiles_root = os.path.join(os.path.dirname(__file__), "static", "tiles")
+        want_local = "Local" in layers
+        want_gray = "LocalG" in layers
+
+        def worker():
+            headers = {"User-Agent": "EnvBike-MDA/1.0 (offline field cache)"}
+            try:
+                for z, xmin, xmax, ymin, ymax in ranges:
+                    for x in range(xmin, xmax + 1):
+                        for y in range(ymin, ymax + 1):
+                            with tile_cache_lock:
+                                if tile_cache_state["cancel"]:
+                                    tile_cache_state["message"] = "Cancelled"
+                                    return
+                            color_path = os.path.join(tiles_root, "osm", str(z), str(x), f"{y}.png")
+                            gray_path = os.path.join(tiles_root, "osm_grayscale", str(z), str(x), f"{y}.png")
+                            need_color = want_local and not os.path.isfile(color_path)
+                            need_gray = want_gray and not os.path.isfile(gray_path)
+
+                            if need_color or need_gray:
+                                img_bytes = None
+                                if os.path.isfile(color_path):
+                                    with open(color_path, "rb") as f:
+                                        img_bytes = f.read()
+                                else:
+                                    _time.sleep(0.06)
+                                    try:
+                                        r = _requests.get(f"https://tile.openstreetmap.org/{z}/{x}/{y}.png", headers=headers, timeout=10)
+                                        if r.status_code == 200:
+                                            img_bytes = r.content
+                                    except _requests.RequestException:
+                                        img_bytes = None
+
+                                if img_bytes:
+                                    if need_color:
+                                        os.makedirs(os.path.dirname(color_path), exist_ok=True)
+                                        with open(color_path, "wb") as f:
+                                            f.write(img_bytes)
+                                    if need_gray:
+                                        os.makedirs(os.path.dirname(gray_path), exist_ok=True)
+                                        im = Image.open(io.BytesIO(img_bytes)).convert("L")
+                                        im.save(gray_path, format="PNG")
+                                    with tile_cache_lock:
+                                        tile_cache_state["downloaded"] += (1 if need_color else 0) + (1 if need_gray else 0)
+                                else:
+                                    with tile_cache_lock:
+                                        tile_cache_state["failed"] += (1 if need_color else 0) + (1 if need_gray else 0)
+
+                            with tile_cache_lock:
+                                tile_cache_state["done"] += len(layers)
+                with tile_cache_lock:
+                    tile_cache_state["message"] = "Done"
+            finally:
+                with tile_cache_lock:
+                    tile_cache_state["running"] = False
+
+        threading.Thread(target=worker, daemon=True).start()
+        return jsonify({"status": "started", "total": total_tiles * len(layers)})
+
+    @app.get('/api/map-tiles/cache/status')
+    def api_map_tiles_cache_status():
+        with tile_cache_lock:
+            return jsonify(dict(tile_cache_state))
+
+    @app.post('/api/map-tiles/cache/cancel')
+    def api_map_tiles_cache_cancel():
+        with tile_cache_lock:
+            tile_cache_state["cancel"] = True
+            return jsonify({"status": "cancelling"})
+
     @app.get('/campaign/<int:campaign_id>/download')
     def campaign_download(campaign_id: int):
         target = db.session.execute(
@@ -731,6 +992,7 @@ def create_app() -> Flask:
             height=height,
             width=width,
             available_species=available_species,
+            map_settings=load_settings()["map"],
         )
 
     @app.route('/windrose')

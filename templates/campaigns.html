@@ -490,6 +490,7 @@
                 <nav class="tabs-bar" role="tablist">
                     <button type="button" class="tab-btn active" data-tab="dashboard">Dashboard</button>
                     <button type="button" class="tab-btn" data-tab="diagnostics">Diagnostics</button>
+                    <button type="button" class="tab-btn" data-tab="settings">Settings</button>
                 </nav>
                 <div class="pill">
                     <span class="dot" id="poll-dot"></span>
@@ -687,6 +688,101 @@
                     <input type="text" class="shell-input" id="shell-input" placeholder="e.g. systemctl status mdau_pub.service" autocomplete="off">
                     <button type="submit" class="btn btn-primary btn-sm">Run</button>
                 </form>
+            </section>
+        </div>
+
+        <div id="tab-settings" class="tab-panel">
+            <section class="card">
+                <h2>
+                    <span>Map Settings</span>
+                    <span class="subtitle" id="settings-save-status"></span>
+                </h2>
+                <form id="map-settings-form">
+                    <div class="form-row" style="margin-bottom:16px;">
+                        <div>
+                            <label for="set-default-layer">Default Map Layer</label>
+                            <select id="set-default-layer" style="width:100%;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.9rem;">
+                                <option value="OSM">OSM (Online OpenStreetMap)</option>
+                                <option value="Local">Local (Offline Color Tiles)</option>
+                                <option value="LocalG">LocalG (Offline Grayscale Tiles)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:16px;">
+                        <label>Cached Offline Map Layers</label>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:6px;">
+                            <label class="diag-check">
+                                <input type="checkbox" class="set-cached-layer" value="Local">
+                                <span>Local (Color) <span class="subtitle" id="tile-stat-Local"></span></span>
+                            </label>
+                            <label class="diag-check">
+                                <input type="checkbox" class="set-cached-layer" value="LocalG">
+                                <span>LocalG (Grayscale) <span class="subtitle" id="tile-stat-LocalG"></span></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:16px;">
+                        <label>Offline Cache Region (Bounding Box)</label>
+                        <div class="form-row" style="margin-top:6px;">
+                            <div>
+                                <label for="set-lat-min">Min Lat</label>
+                                <input type="text" id="set-lat-min" inputmode="decimal">
+                            </div>
+                            <div>
+                                <label for="set-lat-max">Max Lat</label>
+                                <input type="text" id="set-lat-max" inputmode="decimal">
+                            </div>
+                            <div>
+                                <label for="set-lon-min">Min Lon</label>
+                                <input type="text" id="set-lon-min" inputmode="decimal">
+                            </div>
+                            <div>
+                                <label for="set-lon-max">Max Lon</label>
+                                <input type="text" id="set-lon-max" inputmode="decimal">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:18px;">
+                        <label>Cached Zoom Levels</label>
+                        <div class="subtitle" style="margin-top:4px;">
+                            Each zoom level uses 4&times; more tiles and disk space than the previous one.
+                            <code>z14&ndash;z17</code> covers city overview through individual streets; <code>z18&ndash;z19</code> add building/footpath detail at 4&times;&ndash;16&times; the size of <code>z17</code>.
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">
+                            {% set zoom_labels = {
+                                14: 'City / District',
+                                15: 'Neighborhood',
+                                16: 'Roads (default view)',
+                                17: 'Streets',
+                                18: 'Buildings',
+                                19: 'Footpaths'
+                            } %}
+                            {% for z in [14, 15, 16, 17, 18, 19] %}
+                            <label class="diag-check" title="z{{ z }}: {{ zoom_labels[z] }}">
+                                <input type="checkbox" class="set-cache-zoom" value="{{ z }}">
+                                <span>z{{ z }} <span class="subtitle">({{ zoom_labels[z] }})</span></span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <div class="subtitle" id="tile-cached-zooms" style="margin-top:8px;"></div>
+                        <div class="subtitle" id="tile-estimate" style="margin-top:4px;"></div>
+                    </div>
+
+                    <div class="actions-cell">
+                        <button type="submit" class="btn btn-primary">Save Map Settings</button>
+                        <button type="button" class="btn btn-ghost" id="btn-cache-tiles">Download / Cache Tiles</button>
+                        <button type="button" class="btn btn-danger" id="btn-cancel-cache" style="display:none;">Cancel</button>
+                    </div>
+                    <div class="subtitle" id="tile-cache-progress" style="margin-top:8px;"></div>
+                </form>
+            </section>
+
+            <section class="card">
+                <h2>Additional Settings</h2>
+                <p class="subtitle" style="margin:0;">Device configuration (<code>devices.json</code>) and concentration alert thresholds will be added here.</p>
             </section>
         </div>
     </div>
@@ -1088,7 +1184,187 @@
                 } else {
                     clearTimeout(diagTimer);
                 }
+                if (activeTab === 'settings') {
+                    loadSettingsUI();
+                }
             });
+        });
+
+        // Settings tab logic
+        const INITIAL_SETTINGS = {{ settings | tojson }};
+
+        function deg2num(latDeg, lonDeg, zoom) {
+            const latRad = latDeg * Math.PI / 180;
+            const n = Math.pow(2, zoom);
+            const x = Math.floor((lonDeg + 180) / 360 * n);
+            const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+            return [x, y];
+        }
+
+        function updateTileEstimate() {
+            const estEl = document.getElementById('tile-estimate');
+            if (!estEl) return;
+            const latMin = parseFloat(document.getElementById('set-lat-min').value);
+            const latMax = parseFloat(document.getElementById('set-lat-max').value);
+            const lonMin = parseFloat(document.getElementById('set-lon-min').value);
+            const lonMax = parseFloat(document.getElementById('set-lon-max').value);
+            const layers = [...document.querySelectorAll('.set-cached-layer:checked')].map(c => c.value);
+            const zooms = [...document.querySelectorAll('.set-cache-zoom:checked')].map(c => Number(c.value));
+
+            if (![latMin, latMax, lonMin, lonMax].every(Number.isFinite) || !layers.length || !zooms.length) {
+                estEl.textContent = 'Select at least one layer, zoom level, and valid bounding box.';
+                return;
+            }
+            let perLayerTiles = 0;
+            for (const z of zooms) {
+                const [x0, y1] = deg2num(latMin, lonMin, z);
+                const [x1, y0] = deg2num(latMax, lonMax, z);
+                perLayerTiles += (Math.abs(x1 - x0) + 1) * (Math.abs(y1 - y0) + 1);
+            }
+            const totalTiles = perLayerTiles * layers.length;
+            const kbPerTile = (layers.includes('Local') ? 15 : 0) + (layers.includes('LocalG') ? 8 : 0);
+            const estMb = (perLayerTiles * kbPerTile) / 1024;
+            const warn = perLayerTiles > 50000 ? ' (exceeds 50,000 tile limit per run)' : '';
+            estEl.textContent = `Estimated: ${totalTiles.toLocaleString()} tiles (~${estMb.toFixed(1)} MB)${warn}`;
+        }
+
+        function populateSettingsForm(cfg) {
+            const m = (cfg && cfg.map) ? cfg.map : {};
+            document.getElementById('set-default-layer').value = m.default_layer || 'OSM';
+            const cached = new Set(m.cached_layers || []);
+            document.querySelectorAll('.set-cached-layer').forEach(cb => {
+                cb.checked = cached.has(cb.value);
+            });
+            const bbox = m.cache_bbox || {};
+            document.getElementById('set-lat-min').value = bbox.lat_min ?? '';
+            document.getElementById('set-lat-max').value = bbox.lat_max ?? '';
+            document.getElementById('set-lon-min').value = bbox.lon_min ?? '';
+            document.getElementById('set-lon-max').value = bbox.lon_max ?? '';
+            const zooms = new Set((m.cache_zooms || []).map(Number));
+            document.querySelectorAll('.set-cache-zoom').forEach(cb => {
+                cb.checked = zooms.has(Number(cb.value));
+            });
+            updateTileEstimate();
+        }
+
+        let tileCacheTimer = null;
+        async function pollTileCacheStatus() {
+            const progEl = document.getElementById('tile-cache-progress');
+            const btnStart = document.getElementById('btn-cache-tiles');
+            const btnCancel = document.getElementById('btn-cancel-cache');
+            try {
+                const resp = await fetch('/api/map-tiles/cache/status');
+                if (!resp.ok) return;
+                const st = await resp.json();
+                if (st.running) {
+                    btnStart.disabled = true;
+                    btnCancel.style.display = 'inline-flex';
+                    progEl.textContent = `${st.message} ${st.done.toLocaleString()} / ${st.total.toLocaleString()} (new: ${st.downloaded}, failed: ${st.failed})`;
+                    clearTimeout(tileCacheTimer);
+                    tileCacheTimer = setTimeout(pollTileCacheStatus, 1500);
+                } else {
+                    btnStart.disabled = false;
+                    btnCancel.style.display = 'none';
+                    if (st.total > 0) {
+                        progEl.textContent = `${st.message}: ${st.done.toLocaleString()} / ${st.total.toLocaleString()} (new: ${st.downloaded}, failed: ${st.failed})`;
+                        loadSettingsUI();
+                    }
+                }
+            } catch (e) {}
+        }
+
+        async function loadSettingsUI() {
+            try {
+                const [sResp, tResp] = await Promise.all([
+                    fetch('/api/settings'),
+                    fetch('/api/map-tiles/status'),
+                ]);
+                if (sResp.ok) populateSettingsForm(await sResp.json());
+                if (tResp.ok) {
+                    const tData = await tResp.json();
+                    const zoomParts = [];
+                    for (const [layer, info] of Object.entries(tData.layers || {})) {
+                        const el = document.getElementById(`tile-stat-${layer}`);
+                        if (el) el.textContent = `(${info.count.toLocaleString()} tiles, ${info.size_mb} MB)`;
+                        const zEntries = Object.entries(info.zooms || {});
+                        if (zEntries.length) {
+                            const zText = zEntries.map(([z, zi]) => `z${z}: ${zi.count.toLocaleString()} (${zi.size_mb} MB)`).join(', ');
+                            zoomParts.push(`${layer}: ${zText}`);
+                        } else {
+                            zoomParts.push(`${layer}: none`);
+                        }
+                    }
+                    const czEl = document.getElementById('tile-cached-zooms');
+                    if (czEl) czEl.textContent = `Cached on disk — ${zoomParts.join(' · ')}`;
+                }
+            } catch (e) {}
+        }
+
+        populateSettingsForm(INITIAL_SETTINGS);
+        ['set-lat-min', 'set-lat-max', 'set-lon-min', 'set-lon-max'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', updateTileEstimate);
+        });
+        document.querySelectorAll('.set-cached-layer, .set-cache-zoom').forEach(el => {
+            el.addEventListener('change', updateTileEstimate);
+        });
+
+        function collectMapSettingsPayload() {
+            return {
+                map: {
+                    default_layer: document.getElementById('set-default-layer').value,
+                    cached_layers: [...document.querySelectorAll('.set-cached-layer:checked')].map(c => c.value),
+                    cache_bbox: {
+                        lat_min: parseFloat(document.getElementById('set-lat-min').value),
+                        lat_max: parseFloat(document.getElementById('set-lat-max').value),
+                        lon_min: parseFloat(document.getElementById('set-lon-min').value),
+                        lon_max: parseFloat(document.getElementById('set-lon-max').value),
+                    },
+                    cache_zooms: [...document.querySelectorAll('.set-cache-zoom:checked')].map(c => Number(c.value)),
+                }
+            };
+        }
+
+        document.getElementById('btn-cache-tiles')?.addEventListener('click', async () => {
+            const progEl = document.getElementById('tile-cache-progress');
+            progEl.textContent = 'Starting tile download...';
+            try {
+                const resp = await fetch('/api/map-tiles/cache', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(collectMapSettingsPayload()),
+                });
+                const res = await resp.json();
+                if (!resp.ok) {
+                    progEl.textContent = res.error || `HTTP ${resp.status}`;
+                    return;
+                }
+                pollTileCacheStatus();
+            } catch (err) {
+                progEl.textContent = 'Failed to start tile download';
+            }
+        });
+
+        document.getElementById('btn-cancel-cache')?.addEventListener('click', async () => {
+            await fetch('/api/map-tiles/cache/cancel', { method: 'POST' });
+        });
+
+        document.getElementById('map-settings-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const statusEl = document.getElementById('settings-save-status');
+            statusEl.textContent = 'Saving...';
+            const payload = collectMapSettingsPayload();
+            try {
+                const resp = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                statusEl.textContent = 'Saved!';
+                setTimeout(() => { statusEl.textContent = ''; }, 3000);
+            } catch (err) {
+                statusEl.textContent = 'Failed to save';
+            }
         });
 
         ['diag-sensor', 'diag-errors-only'].forEach(id => {

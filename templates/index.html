@@ -204,6 +204,7 @@ Map Display
         end: {% if campaign.end %} new Date("{{campaign.end.isoformat()}}"){% else %} null{% endif %}
     };
     var availableSpecies = {{ active_list | tojson }};
+    var mapSettings = {{ (map_settings if map_settings is defined else {"default_layer": "OSM"}) | tojson }};
 
     (function () {
         const selector = document.getElementById('gas-selector');

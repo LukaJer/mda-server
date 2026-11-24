@@ -16,6 +16,7 @@ import { getBaseConcentration } from './campaign-statistics';
 
 declare var campaign: Campaign;
 declare var availableSpecies: string[] | undefined;
+declare var mapSettings: { default_layer?: string } | undefined;
 
 
 type RangeMode =
@@ -72,15 +73,19 @@ async function main() {
     var map = L.map('map', map_options).setView([map_view_lat, map_view_long], 16);
     map.attributionControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors');
 
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19});
     const osm_local = L.tileLayer('/static/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 19});
     const osm_local_grayscale = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19});
 
-    const tile_layers = {
+    const tile_layers: { [key: string]: L.TileLayer } = {
         "OSM": osm,
         "Local": osm_local,
         "LocalG": osm_local_grayscale
     };
+    const defaultLayerKey = (typeof mapSettings !== 'undefined' && mapSettings?.default_layer && tile_layers[mapSettings.default_layer])
+        ? mapSettings.default_layer
+        : "OSM";
+    tile_layers[defaultLayerKey].addTo(map);
 
 
     var NavigationIcon = L.icon({
