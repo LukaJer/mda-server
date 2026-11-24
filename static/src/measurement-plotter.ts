@@ -10,6 +10,7 @@ export class MeasurementPlotter {
     private baseInterval: number = 1000;
     private maxInterval: number = 10000;
     private currentInterval: number = this.baseInterval;
+    public onFinished?: () => void;
 
 
 
@@ -42,6 +43,7 @@ export class MeasurementPlotter {
             } catch (error) {
                 if (this.end_datetime !== null) {
                     this.stopPlotting();
+                    this.onFinished?.();
                     return;
                 }
                 this.currentInterval = Math.min(this.currentInterval * 2, this.maxInterval); // Exponential backoff

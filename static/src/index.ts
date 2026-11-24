@@ -142,14 +142,29 @@ async function main() {
     const wind_plotter = new WindMeasurementPlotter(map, campaign.start, campaign.end);
     wind_plotter.startPlotting(1000);
 
+    const isLive = campaign.end === null;
     const start_key = (initial_gas in gas_layers) ? initial_gas : Object.keys(gas_layers)[0];
     let active_plotter: GasMeasurementPlotter | null = gas_layers[start_key]?.plotter ?? null;
 
-    const focus_control = new FocusControl({ position: 'topleft' }, (focus: boolean) => active_plotter?.setFocus(focus));
+    const focus_control = new FocusControl(
+        { position: 'topleft' },
+        (focus: boolean) => active_plotter?.setFocus(focus),
+        isLive
+    );
     const wind_control = new WindControl({ position: 'topleft' }, (show: boolean) => wind_plotter.show(show))
 
     if (active_plotter) {
         active_plotter.show(true);
+        if (isLive) {
+            active_plotter.setFocus(true);
+        } else {
+            active_plotter.onFinished = () => {
+                const bounds = active_plotter?.getBounds();
+                if (bounds && bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [24, 24] });
+                }
+            };
+        }
         gas_slider.updateGasType(start_key, active_plotter.measurements);
         if (start_key !== initial_gas) {
             gas_display.changeGasType(start_key, unitFor(start_key));

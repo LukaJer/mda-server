@@ -52,7 +52,7 @@ class ApiHelper:
         if not request or not request.strip():
             return None
         val = request.strip()
-        for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S"):
+        for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S"):
             try:
                 return datetime.strptime(val, fmt)
             except ValueError:

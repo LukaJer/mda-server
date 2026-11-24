@@ -340,7 +340,7 @@ def create_app() -> Flask:
     @app.post('/campaign/start')
     def campaign_start():
         now = datetime.datetime.now().replace(microsecond=0)
-        name = ApiHelper.get_post_if_set(request.form.get('name')) or f"Campaign {now.strftime('%Y-%m-%d %H:%M')}"
+        name = ApiHelper.get_post_if_set(request.form.get('name')) or f"Campaign {now.strftime('%Y.%m.%d %H:%M')}"
         author = ApiHelper.get_post_if_set(request.form.get('author'))
         description = ApiHelper.get_post_if_set(request.form.get('description'))
 

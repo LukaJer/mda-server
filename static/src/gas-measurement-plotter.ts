@@ -176,6 +176,10 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
         }
     }
 
+    getBounds(): L.LatLngBounds {
+        return this.gas_measurement_layer.getBounds();
+    }
+
     private createLegend(): L.Control {
         var legend = new L.Control({position: 'bottomright'});
         var grades = this.generateEquallySpacedValues(this.minimum_concentration, this.maximum_concentration, 8);

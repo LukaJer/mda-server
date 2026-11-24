@@ -88,12 +88,12 @@
                     <input type="text" name="author" id="author" value="{{ campaign.author or '' }}">
                 </div>
                 <div class="field">
-                    <label for="start">Start (DD/MM/YYYY HH:MM, 24h)</label>
-                    <input type="text" name="start" id="start" value="{{ campaign.start.strftime('%d/%m/%Y %H:%M') }}" placeholder="DD/MM/YYYY HH:MM" pattern="\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}(:\d{2})?" required>
+                    <label for="start">Start (YYYY.MM.DD HH:MM, 24h)</label>
+                    <input type="text" name="start" id="start" value="{{ campaign.start.strftime('%Y.%m.%d %H:%M') }}" placeholder="YYYY.MM.DD HH:MM" pattern="\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}(:\d{2})?" required>
                 </div>
                 <div class="field">
-                    <label for="end">End (DD/MM/YYYY HH:MM, 24h — leave empty for live campaign)</label>
-                    <input type="text" name="end" id="end" value="{% if campaign.end %}{{ campaign.end.strftime('%d/%m/%Y %H:%M') }}{% endif %}" placeholder="DD/MM/YYYY HH:MM" pattern="(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}(:\d{2})?)?">
+                    <label for="end">End (YYYY.MM.DD HH:MM, 24h — leave empty for live campaign)</label>
+                    <input type="text" name="end" id="end" value="{% if campaign.end %}{{ campaign.end.strftime('%Y.%m.%d %H:%M') }}{% endif %}" placeholder="YYYY.MM.DD HH:MM" pattern="(\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}(:\d{2})?)?">
                 </div>
                 <div class="field">
                     <label for="description">Description</label>
