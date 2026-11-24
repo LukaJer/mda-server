@@ -1,3 +1,4 @@
+import math
 from typing import List, Union, Type
 
 import numpy as np
@@ -12,6 +13,71 @@ from models.wind_measurement_with_location import WindMeasurementWithLocation
 
 class Interpolator:
     MAX_INTERPOLATION_DISTANCE = 5.0
+    MAX_JUMP_SPEED_MPS = 100.0
+    MIN_JUMP_ALLOWANCE_M = 50.0
+    RECOVERY_CONSECUTIVE_FIXES = 3
+
+    @staticmethod
+    def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        r = 6371000.0
+        p1, p2 = math.radians(lat1), math.radians(lat2)
+        dp = math.radians(lat2 - lat1)
+        dl = math.radians(lon2 - lon1)
+        a = math.sin(dp / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2.0) ** 2
+        return 2.0 * r * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+
+    @classmethod
+    def filter_plausible_locations(cls, locations: List[LocationMeasurement]) -> List[LocationMeasurement]:
+        """Filter out Null Island, out-of-bounds, non-finite, and implausible jump GPS fixes."""
+        filtered: List[LocationMeasurement] = []
+        last_valid = None  # (ts, lat, lon)
+        candidate = None   # (ts, lat, lon, buffer_list)
+
+        for loc in sorted(locations, key=lambda l: l.datetime):
+            try:
+                lat = float(loc.latitude)
+                lon = float(loc.longitude)
+            except (TypeError, ValueError):
+                continue
+            if not (math.isfinite(lat) and math.isfinite(lon)):
+                continue
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                continue
+            if abs(lat) < 1e-6 and abs(lon) < 1e-6:
+                continue
+
+            ts = loc.datetime.timestamp()
+            if last_valid is None:
+                last_valid = (ts, lat, lon)
+                filtered.append(loc)
+                continue
+
+            prev_ts, prev_lat, prev_lon = last_valid
+            dt_s = max(0.0, ts - prev_ts)
+            dist_m = cls._haversine_m(prev_lat, prev_lon, lat, lon)
+            if dist_m <= max(cls.MIN_JUMP_ALLOWANCE_M, cls.MAX_JUMP_SPEED_MPS * dt_s):
+                last_valid = (ts, lat, lon)
+                candidate = None
+                filtered.append(loc)
+                continue
+
+            if candidate is not None:
+                c_ts, c_lat, c_lon, buf = candidate
+                c_dt_s = max(0.0, ts - c_ts)
+                c_dist_m = cls._haversine_m(c_lat, c_lon, lat, lon)
+                if c_dist_m <= max(cls.MIN_JUMP_ALLOWANCE_M, cls.MAX_JUMP_SPEED_MPS * c_dt_s):
+                    buf.append(loc)
+                    if len(buf) >= cls.RECOVERY_CONSECUTIVE_FIXES:
+                        filtered.extend(buf)
+                        last_valid = (ts, lat, lon)
+                        candidate = None
+                    else:
+                        candidate = (ts, lat, lon, buf)
+                    continue
+
+            candidate = (ts, lat, lon, [loc])
+
+        return filtered
 
     @staticmethod
     def interpolate_measurements(
@@ -22,10 +88,14 @@ class Interpolator:
         if not measurements or not locations:
             return []
 
+        plausible_locs = Interpolator.filter_plausible_locations(locations)
+        if not plausible_locs:
+            return []
+
         # Deduplicate and sort by timestamp so interp1d never divides by zero
         seen_ts = set()
         unique_locs: List[LocationMeasurement] = []
-        for loc in sorted(locations, key=lambda l: l.datetime):
+        for loc in plausible_locs:
             ts = loc.datetime.timestamp()
             if ts not in seen_ts:
                 seen_ts.add(ts)

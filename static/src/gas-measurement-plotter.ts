@@ -5,6 +5,12 @@ import { Feature, FeatureCollection, GeoJsonObject } from 'geojson';
 import { Slider } from './gas-slider';
 import { NumericDisplay } from './numeric-display';
 
+export const COLOR_PALETTES: { [key: string]: string[] } = {
+    default: ['#19994E', '#68BB68', '#A7D866', '#D9EF8A', '#FFFEBA', '#FFDF88', '#FDAE61', '#F46D43', '#D82F2A'],
+    plasma:  ['#0D0887', '#46039F', '#7201A8', '#9C179E', '#BD3786', '#D8576B', '#ED7953', '#FB9F3A', '#F0F921'],
+    turbo:   ['#30123B', '#4662D7', '#36AAF9', '#1AE4B6', '#72FE5E', '#C8EF34', '#FABA39', '#F66B19', '#7A0403'],
+};
+
 export class GasMeasurementPlotter extends MeasurementPlotter {
     map: L.Map
     gas_measurement_layer: L.GeoJSON
@@ -31,9 +37,11 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             slider: Slider,
             numeric_display: NumericDisplay,
             start_datetime: Date, 
-            end_datetime: Date | null = null
+            end_datetime: Date | null = null,
+            palette: string = 'default'
         ) {
         super(start_datetime, end_datetime, 'gas');
+        this.colors = COLOR_PALETTES[palette] || COLOR_PALETTES.default;
         this.map = map;
         this.marker = marker;
         this.gas_measurement_layer = L.geoJSON();

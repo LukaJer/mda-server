@@ -21,6 +21,7 @@ declare var campaign: Campaign;
 declare var availableSpecies: string[] | undefined;
 declare var mapSettings: {
     default_layer?: string;
+    color_palette?: string;
     active_mbtiles_info?: MBTilesInfo | null;
     has_local_png?: boolean;
     has_local_gray_png?: boolean;
@@ -185,9 +186,10 @@ async function main() {
             max_value = min_value + Number(getUrlParameter(cfg.range.spanParam, "100")) * cfg.range.spanScale;
         }
 
+        const palette = (typeof mapSettings !== 'undefined' && mapSettings?.color_palette) ? mapSettings.color_palette : 'default';
         const plotter = new GasMeasurementPlotter(
             map, marker, name, min_value, max_value, cfg.unit,
-            gas_slider, gas_display, campaign.start, campaign.end
+            gas_slider, gas_display, campaign.start, campaign.end, palette
         );
         plotter.startPlotting(1000);
         gas_layers[name] = { plotter: plotter };

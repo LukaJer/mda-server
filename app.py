@@ -86,6 +86,7 @@ def default_settings() -> dict:
             "tile_source_url": "http://127.0.0.1:8080/tile/{z}/{x}/{y}.png",
             "active_mbtiles": "planet_11.337_48.047_b531ac7e.mbtiles",
             "mbtiles_descriptions": {},
+            "color_palette": "default",
         }
     }
 
@@ -313,7 +314,7 @@ def create_app() -> Flask:
     def get_location_measurements():
         measurement_request = Request(request.args)
         measurements = LocationMeasurement.get_data(measurement_request)
-        return measurements
+        return Interpolator.filter_plausible_locations(measurements)
 
     @app.get("/measurement/wind")
     @timeit
@@ -751,6 +752,12 @@ def create_app() -> Flask:
             valid_layers = {"OSM", "Local", "LocalG", "MBTiles", "MBTilesG"}
             if m.get("default_layer") in valid_layers:
                 current["map"]["default_layer"] = m["default_layer"]
+            valid_palettes = {"default", "plasma", "turbo"}
+            if "color_palette" in m:
+                if m.get("color_palette") in valid_palettes:
+                    current["map"]["color_palette"] = m["color_palette"]
+                else:
+                    return {"error": "Invalid color_palette"}, 400
             if "active_mbtiles" in m:
                 am = m.get("active_mbtiles")
                 if am == "" or (isinstance(am, str) and _MBTILES_NAME_RE.match(am)):

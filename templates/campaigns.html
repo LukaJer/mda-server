@@ -847,16 +847,29 @@
                     <span class="subtitle" id="settings-save-status"></span>
                 </h2>
                 <form id="map-settings-form" class="settings-stack">
-                    <div class="settings-group">
-                        <div class="settings-group-title">Default Map Layer</div>
-                        <label for="set-default-layer">Active base layer when opening a campaign map</label>
-                        <select id="set-default-layer" class="settings-select">
-                            <option value="OSM">OSM (Online OpenStreetMap)</option>
-                            <option value="MBTiles">MBTiles (Offline Map — Color)</option>
-                            <option value="MBTilesG">MBTilesG (Offline Map — Grayscale)</option>
-                            <option value="Local">Local (PNG Cache — Color)</option>
-                            <option value="LocalG">LocalG (PNG Cache — Grayscale)</option>
-                        </select>
+                    <div class="settings-two-col">
+                        <div class="settings-group">
+                            <div class="settings-group-title">Default Map Layer</div>
+                            <label for="set-default-layer">Active base layer when opening a campaign map</label>
+                            <select id="set-default-layer" class="settings-select">
+                                <option value="OSM">OSM (Online OpenStreetMap)</option>
+                                <option value="MBTiles">MBTiles (Offline Map — Color)</option>
+                                <option value="MBTilesG">MBTilesG (Offline Map — Grayscale)</option>
+                                <option value="Local">Local (PNG Cache — Color)</option>
+                                <option value="LocalG">LocalG (PNG Cache — Grayscale)</option>
+                            </select>
+                        </div>
+
+                        <div class="settings-group">
+                            <div class="settings-group-title">Track Color Palette</div>
+                            <label for="set-color-palette">Color scale used for concentration tracks &amp; legend</label>
+                            <select id="set-color-palette" class="settings-select">
+                                <option value="default">Default (Green &rarr; Yellow &rarr; Red)</option>
+                                <option value="plasma">Plasma (Purple &rarr; Pink &rarr; Yellow)</option>
+                                <option value="turbo">Turbo (Blue &rarr; Cyan &rarr; Orange &rarr; Red)</option>
+                            </select>
+                            <div id="palette-preview" style="height:8px;border-radius:999px;margin-top:8px;border:1px solid var(--border);"></div>
+                        </div>
                     </div>
 
                     <div class="settings-group">
@@ -1290,9 +1303,24 @@
         // Settings tab logic
         const INITIAL_SETTINGS = {{ settings | tojson }};
 
+        const PALETTE_GRADIENTS = {
+            default: 'linear-gradient(90deg, #19994E, #68BB68, #A7D866, #D9EF8A, #FFFEBA, #FFDF88, #FDAE61, #F46D43, #D82F2A)',
+            plasma: 'linear-gradient(90deg, #0D0887, #46039F, #7201A8, #9C179E, #BD3786, #D8576B, #ED7953, #FB9F3A, #F0F921)',
+            turbo: 'linear-gradient(90deg, #30123B, #4662D7, #36AAF9, #1AE4B6, #72FE5E, #C8EF34, #FABA39, #F66B19, #7A0403)',
+        };
+
+        function updatePalettePreview() {
+            const sel = document.getElementById('set-color-palette');
+            const bar = document.getElementById('palette-preview');
+            if (sel && bar) bar.style.background = PALETTE_GRADIENTS[sel.value] || PALETTE_GRADIENTS.default;
+        }
+
         function populateSettingsForm(cfg) {
             const m = (cfg && cfg.map) ? cfg.map : {};
             document.getElementById('set-default-layer').value = m.default_layer || 'OSM';
+            const palEl = document.getElementById('set-color-palette');
+            if (palEl) palEl.value = m.color_palette || 'default';
+            updatePalettePreview();
         }
 
         function renderMbtilesList(data) {
@@ -1337,6 +1365,7 @@
         }
 
         populateSettingsForm(INITIAL_SETTINGS);
+        document.getElementById('set-color-palette')?.addEventListener('change', updatePalettePreview);
 
         function collectMapSettingsPayload() {
             const activeMbEl = document.querySelector('.set-active-mbtiles:checked');
@@ -1348,6 +1377,7 @@
             return {
                 map: {
                     default_layer: document.getElementById('set-default-layer').value,
+                    color_palette: document.getElementById('set-color-palette')?.value || 'default',
                     active_mbtiles: activeMbEl ? activeMbEl.value : '',
                     mbtiles_descriptions: mbtilesDescriptions,
                 }
