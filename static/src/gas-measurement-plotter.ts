@@ -12,6 +12,7 @@ export const COLOR_PALETTES: { [key: string]: string[] } = {
 
 export class GasMeasurementPlotter extends MeasurementPlotter {
     map: L.Map
+    casing_layer: L.FeatureGroup
     gas_measurement_layer: L.FeatureGroup
     marker: L.Marker
     gas_name: string;
@@ -25,6 +26,7 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     private legend: L.Control;
     private is_visible: boolean = false;
     private renderer: L.Canvas;
+    private casingRenderer: L.Canvas;
 
 
     constructor(
@@ -39,13 +41,16 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             start_datetime: Date, 
             end_datetime: Date | null = null,
             palette: string = 'default',
-            renderer?: L.Canvas
+            renderer?: L.Canvas,
+            casingRenderer?: L.Canvas
         ) {
         super(start_datetime, end_datetime, 'gas');
         this.colors = COLOR_PALETTES[palette] || COLOR_PALETTES.default;
         this.map = map;
         this.marker = marker;
+        this.casingRenderer = casingRenderer || L.canvas({ padding: 0.5 });
         this.renderer = renderer || L.canvas({ padding: 0.5 });
+        this.casing_layer = L.featureGroup();
         this.gas_measurement_layer = L.featureGroup();
         this.gas_name = type;
 
@@ -100,11 +105,11 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
 
             L.polyline(latlngs, {
                 color: '#0f172a',
-                opacity: 0.55,
-                weight: 9,
+                opacity: 0.85,
+                weight: 8,
                 interactive: false,
-                renderer: this.renderer,
-            }).addTo(this.gas_measurement_layer);
+                renderer: this.casingRenderer,
+            }).addTo(this.casing_layer);
 
             const line = L.polyline(latlngs, {
                 color: color,
@@ -212,6 +217,7 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
         }
         this.is_visible = show;
         if (show) {
+            this.map.addLayer(this.casing_layer);
             this.map.addLayer(this.gas_measurement_layer);
             this.map.addControl(this.legend);
             if (this.previous_measurement) {
@@ -219,6 +225,7 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             }
         } else {
             this.map.removeLayer(this.gas_measurement_layer);
+            this.map.removeLayer(this.casing_layer);
             this.map.removeControl(this.legend);
         }
     }

@@ -65,6 +65,38 @@ Map Display
             font-weight: 600;
             white-space: nowrap;
         }
+        #track-loading {
+            position: fixed;
+            top: 52px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 22px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.96);
+            color: #0f172a;
+            border: 1px solid #cbd5e1;
+            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.18);
+            font-size: 1.05rem;
+            font-weight: 600;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        .track-spinner {
+            width: 22px;
+            height: 22px;
+            flex-shrink: 0;
+            border: 3px solid #cbd5e1;
+            border-top-color: #0284c7;
+            border-radius: 50%;
+            animation: trackSpin 0.7s linear infinite;
+        }
+        @keyframes trackSpin {
+            to { transform: rotate(360deg); }
+        }
         #control-panel {
             position: fixed;
             bottom: 0;
@@ -171,6 +203,10 @@ Map Display
     {% if short_data %}
     <div id="short-data-warning">&#9888; &lt; 120s of data recorded</div>
     {% endif %}
+    <div id="track-loading" role="status" aria-live="polite">
+        <span class="track-spinner"></span>
+        <span id="track-loading-text">Loading track...</span>
+    </div>
     {% endif %}
     <div id="map"></div>
     <div id="control-panel">

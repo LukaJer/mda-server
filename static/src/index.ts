@@ -172,7 +172,21 @@ async function main() {
 
     const isLive = campaign.end === null;
     const palette = (typeof mapSettings !== 'undefined' && mapSettings?.color_palette) ? mapSettings.color_palette : 'default';
+    const casingPane = map.createPane('trackCasingPane');
+    casingPane.style.zIndex = '399';
+    casingPane.style.pointerEvents = 'none';
+    const casingRenderer = L.canvas({ padding: 0.5, pane: 'trackCasingPane' });
     const canvasRenderer = L.canvas({ padding: 0.5 });
+
+    const loadingEl = document.getElementById('track-loading');
+    const loadingTextEl = document.getElementById('track-loading-text');
+    function setTrackLoading(visible: boolean, text: string = 'Loading track...') {
+        if (!loadingEl) return;
+        loadingEl.style.display = visible ? 'inline-flex' : 'none';
+        if (loadingTextEl && text) {
+            loadingTextEl.textContent = text;
+        }
+    }
 
     const gas_layers: { [key: string]: { plotter: GasMeasurementPlotter; finished: boolean } } = {};
     let active_plotter: GasMeasurementPlotter | null = null;
@@ -204,11 +218,24 @@ async function main() {
 
         const plotter = new GasMeasurementPlotter(
             map, marker, name, min_value, max_value, cfg.unit,
-            gas_slider, gas_display, campaign.start, campaign.end, palette, canvasRenderer
+            gas_slider, gas_display, campaign.start, campaign.end, palette, canvasRenderer, casingRenderer
         );
         const entry = { plotter, finished: false };
+        plotter.onBatch = (totalCount: number) => {
+            if (active_plotter === plotter && !isLive && !entry.finished) {
+                setTrackLoading(true, `Loading ${name} (${totalCount.toLocaleString()} pts)...`);
+            }
+        };
+        plotter.onPollSettled = () => {
+            if (active_plotter === plotter && isLive) {
+                setTrackLoading(false);
+            }
+        };
         plotter.onFinished = () => {
             entry.finished = true;
+            if (active_plotter === plotter) {
+                setTrackLoading(false);
+            }
             if (!isLive && !hasFittedInitialBounds && active_plotter === plotter) {
                 hasFittedInitialBounds = true;
                 const bounds = plotter.getBounds();
@@ -236,6 +263,7 @@ async function main() {
     );
     const wind_control = new WindControl({ position: 'topleft' }, (show: boolean) => wind_plotter.show(show))
 
+    setTrackLoading(true, `Loading ${start_key}...`);
     active_plotter = await getOrCreatePlotter(start_key);
     if (active_plotter) {
         active_plotter.show(true);
@@ -251,6 +279,8 @@ async function main() {
                 selector.dispatchEvent(new Event('change', { bubbles: false }));
             }
         }
+    } else {
+        setTrackLoading(false);
     }
 
     let switchSeq = 0;
@@ -268,8 +298,10 @@ async function main() {
             active_plotter = null;
         }
 
+        setTrackLoading(true, `Loading ${selectedLayerKey}...`);
         const nextPlotter = await getOrCreatePlotter(selectedLayerKey);
         if (seq !== switchSeq || !nextPlotter) {
+            if (seq === switchSeq) setTrackLoading(false);
             return;
         }
 
@@ -286,7 +318,13 @@ async function main() {
 
         const entry = gas_layers[selectedLayerKey];
         if (isLive || !entry.finished) {
+            const count = active_plotter.measurements.size;
+            if (count > 0 && !isLive) {
+                setTrackLoading(true, `Loading ${selectedLayerKey} (${count.toLocaleString()} pts)...`);
+            }
             active_plotter.startPlotting(1000);
+        } else {
+            setTrackLoading(false);
         }
     });
 

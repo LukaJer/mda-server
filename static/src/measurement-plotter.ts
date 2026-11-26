@@ -13,6 +13,8 @@ export class MeasurementPlotter {
     private pollGeneration: number = 0;
     private abortController: AbortController | null = null;
     public onFinished?: () => void;
+    public onBatch?: (totalCount: number) => void;
+    public onPollSettled?: () => void;
 
 
 
@@ -46,12 +48,14 @@ export class MeasurementPlotter {
             try {
                 await this.update(ctrl.signal);
                 if (!this.isPolling || gen !== this.pollGeneration) return;
+                this.onPollSettled?.();
                 // Finished campaigns should fetch all remaining batches immediately without waiting
                 this.currentInterval = this.end_datetime !== null ? 0 : this.baseInterval;
             } catch (error) {
                 if (!this.isPolling || gen !== this.pollGeneration || (error as any)?.name === 'AbortError') {
                     return;
                 }
+                this.onPollSettled?.();
                 if (this.end_datetime !== null) {
                     this.stopPlotting();
                     this.onFinished?.();
@@ -113,6 +117,7 @@ export class MeasurementPlotter {
         if (!new_measurements) {
             throw new Error("No new data available.");
         }
+        this.onBatch?.(this.measurements.size);
     }
 
     drawMeasurement(measurement: any) {
