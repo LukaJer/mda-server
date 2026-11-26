@@ -1160,13 +1160,21 @@
 
         let pollTimer = null;
         let liveSource = null;
+        let liveFetchController = null;
         let sseFailCount = 0;
         let gpsHasLiveFix = false;
 
         function stopLiveStream() {
             clearTimeout(pollTimer);
             pollTimer = null;
+            if (liveFetchController) {
+                liveFetchController.abort();
+                liveFetchController = null;
+            }
             if (liveSource) {
+                liveSource.onopen = null;
+                liveSource.onmessage = null;
+                liveSource.onerror = null;
                 liveSource.close();
                 liveSource = null;
             }
@@ -1182,17 +1190,21 @@
                 return;
             }
             stopLiveStream();
+            sseFailCount = 0;
             const dot = document.getElementById('poll-dot');
             const status = document.getElementById('poll-status');
             const updated = document.getElementById('last-updated');
 
-            liveSource = new EventSource('/api/live/stream');
-            liveSource.onopen = () => {
+            const src = new EventSource('/api/live/stream');
+            liveSource = src;
+            src.onopen = () => {
+                if (src !== liveSource) return;
                 sseFailCount = 0;
                 dot.className = 'dot live';
                 status.textContent = 'Server Online (Live)';
             };
-            liveSource.onmessage = (ev) => {
+            src.onmessage = (ev) => {
+                if (src !== liveSource) return;
                 try {
                     const data = JSON.parse(ev.data);
                     sseFailCount = 0;
@@ -1202,7 +1214,8 @@
                     updated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour12: false })}`;
                 } catch (e) {}
             };
-            liveSource.onerror = () => {
+            src.onerror = () => {
+                if (src !== liveSource) return;
                 sseFailCount += 1;
                 dot.className = 'dot offline';
                 status.textContent = 'Reconnecting...';
@@ -1228,25 +1241,43 @@
 
         async function pollLive() {
             if (document.hidden) return;
+            if (liveFetchController) {
+                liveFetchController.abort();
+                liveFetchController = null;
+            }
+            const ctrl = new AbortController();
+            liveFetchController = ctrl;
+
             const dot = document.getElementById('poll-dot');
             const status = document.getElementById('poll-status');
             const updated = document.getElementById('last-updated');
             let nextMs = IDLE_POLL_MS;
+            let aborted = false;
 
             try {
-                const resp = await fetch('/api/live');
+                const resp = await fetch('/api/live', { signal: ctrl.signal });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
+                if (ctrl !== liveFetchController || liveSource) return;
                 nextMs = updateTelemetry(data);
                 dot.className = 'dot live';
                 status.textContent = 'Server Online';
                 updated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour12: false })}`;
             } catch (err) {
+                if (err && err.name === 'AbortError') {
+                    aborted = true;
+                    return;
+                }
+                if (ctrl !== liveFetchController || liveSource) return;
                 dot.className = 'dot offline';
                 status.textContent = 'Server Unreachable';
             } finally {
-                clearTimeout(pollTimer);
-                if (!document.hidden && !liveSource) {
+                const isCurrent = (ctrl === liveFetchController);
+                if (isCurrent) {
+                    liveFetchController = null;
+                }
+                if (isCurrent && !aborted && !document.hidden && !liveSource) {
+                    clearTimeout(pollTimer);
                     pollTimer = setTimeout(pollLive, nextMs);
                 }
             }

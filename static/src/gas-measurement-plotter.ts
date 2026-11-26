@@ -64,10 +64,10 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             this.updateMarkerPosition(measurement);
         }
         this.addMeasurementToLayer(measurement);
-        if (this.slider.gas_name == this.gas_name) {
+        if (this.is_visible && this.slider.gas_name == this.gas_name) {
             this.slider.updateSliderMax();
         }
-        if (this.numeric_dispaly.gas_name == this.gas_name) {
+        if (this.is_visible && this.numeric_dispaly.gas_name == this.gas_name) {
             this.numeric_dispaly.updateValue(measurement.concentration);
         }
     }

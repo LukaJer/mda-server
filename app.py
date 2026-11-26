@@ -267,6 +267,11 @@ def _nearest_location(t: datetime.datetime, loc_times: List[datetime.datetime],
     return None
 
 
+def _finite_float(val):
+    """Return val if it is a finite real number, otherwise None."""
+    return val if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) else None
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config['ACCEPT_MEASUREMENT_DATA'] = True
@@ -283,6 +288,8 @@ def create_app() -> Flask:
     live_cache_cond = threading.Condition(live_cache_lock)
     live_cache_version = [0]
     startup_max_ids = {"gas": 0, "location": 0, "wind": 0, "log": 0}
+    sse_semaphore = threading.BoundedSemaphore(4)
+    SSE_MAX_LIFETIME_SECONDS = 90.0
 
     def _notify_live_update() -> None:
         with live_cache_cond:
@@ -603,7 +610,7 @@ def create_app() -> Flask:
             for g in recent_gases:
                 if g.type not in gas_data:
                     gas_data[g.type] = {
-                        "concentration": g.concentration,
+                        "concentration": _finite_float(g.concentration),
                         "unit": g.unit,
                         "datetime": g.datetime.isoformat(),
                         "age_seconds": max(0.0, (now - g.datetime).total_seconds()),
@@ -617,10 +624,10 @@ def create_app() -> Flask:
             ).scalar()
             if latest_loc:
                 loc_data = {
-                    "latitude": latest_loc.latitude,
-                    "longitude": latest_loc.longitude,
-                    "speed": latest_loc.speed,
-                    "heading": latest_loc.heading,
+                    "latitude": _finite_float(latest_loc.latitude),
+                    "longitude": _finite_float(latest_loc.longitude),
+                    "speed": _finite_float(latest_loc.speed),
+                    "heading": _finite_float(latest_loc.heading),
                     "datetime": latest_loc.datetime.isoformat(),
                     "age_seconds": max(0.0, (now - latest_loc.datetime).total_seconds()),
                 }
@@ -633,8 +640,8 @@ def create_app() -> Flask:
             ).scalar()
             if latest_wind:
                 wind_data = {
-                    "speed": latest_wind.speed,
-                    "heading": latest_wind.heading,
+                    "speed": _finite_float(latest_wind.speed),
+                    "heading": _finite_float(latest_wind.heading),
                     "datetime": latest_wind.datetime.isoformat(),
                     "age_seconds": max(0.0, (now - latest_wind.datetime).total_seconds()),
                 }
@@ -659,7 +666,7 @@ def create_app() -> Flask:
                 db_entry = gas_data.get(g_type)
                 if db_entry is None or cached["datetime"].isoformat() >= db_entry["datetime"]:
                     gas_data[g_type] = {
-                        "concentration": cached["concentration"],
+                        "concentration": _finite_float(cached["concentration"]),
                         "unit": cached["unit"],
                         "datetime": cached["datetime"].isoformat(),
                         "age_seconds": max(0.0, (now - cached["datetime"]).total_seconds()),
@@ -668,10 +675,10 @@ def create_app() -> Flask:
                 c_loc = live_cache["location"]
                 if loc_data is None or c_loc["datetime"].isoformat() >= loc_data["datetime"]:
                     loc_data = {
-                        "latitude": c_loc["latitude"],
-                        "longitude": c_loc["longitude"],
-                        "speed": c_loc["speed"],
-                        "heading": c_loc["heading"],
+                        "latitude": _finite_float(c_loc["latitude"]),
+                        "longitude": _finite_float(c_loc["longitude"]),
+                        "speed": _finite_float(c_loc["speed"]),
+                        "heading": _finite_float(c_loc["heading"]),
                         "datetime": c_loc["datetime"].isoformat(),
                         "age_seconds": max(0.0, (now - c_loc["datetime"]).total_seconds()),
                     }
@@ -679,8 +686,8 @@ def create_app() -> Flask:
                 c_wind = live_cache["wind"]
                 if wind_data is None or c_wind["datetime"].isoformat() >= wind_data["datetime"]:
                     wind_data = {
-                        "speed": c_wind["speed"],
-                        "heading": c_wind["heading"],
+                        "speed": _finite_float(c_wind["speed"]),
+                        "heading": _finite_float(c_wind["heading"]),
                         "datetime": c_wind["datetime"].isoformat(),
                         "age_seconds": max(0.0, (now - c_wind["datetime"]).total_seconds()),
                     }
@@ -708,29 +715,41 @@ def create_app() -> Flask:
 
     @app.get('/api/live/stream')
     def api_live_stream():
+        if not sse_semaphore.acquire(blocking=False):
+            return {"error": "Too many live stream clients"}, 503
+
         once = request.args.get('once', '').lower() in ('1', 'true', 'yes')
 
         def event_stream():
             try:
-                snapshot = _build_live_payload(include_db=True)
+                try:
+                    snapshot = _build_live_payload(include_db=True)
+                finally:
+                    db.session.remove()
                 with live_cache_cond:
                     last_version = live_cache_version[0]
                 yield f"data: {json.dumps(snapshot, allow_nan=False)}\n\n"
                 if once:
                     return
 
-                while True:
+                deadline = time.monotonic() + SSE_MAX_LIFETIME_SECONDS
+                while time.monotonic() < deadline:
+                    wait_timeout = min(2.0, max(0.0, deadline - time.monotonic()))
                     with live_cache_cond:
                         if live_cache_version[0] == last_version:
-                            live_cache_cond.wait(timeout=2.0)
+                            live_cache_cond.wait(timeout=wait_timeout)
                         cur_version = live_cache_version[0]
                     if cur_version != last_version:
                         time.sleep(0.05)
                         with live_cache_cond:
                             last_version = live_cache_version[0]
+                    if time.monotonic() >= deadline:
+                        break
                     yield f"data: {json.dumps(_build_live_payload(include_db=False), allow_nan=False)}\n\n"
             except GeneratorExit:
                 return
+            finally:
+                sse_semaphore.release()
 
         return Response(
             stream_with_context(event_stream()),
@@ -1289,11 +1308,6 @@ def create_app() -> Flask:
 
         safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', target.name or f'campaign_{target.id}').strip('_')
         base_fname = f"{safe_name}_{start_dt.strftime('%Y-%m-%d_%H-%M')}"
-
-        def _finite_float(val):
-            if val is None:
-                return None
-            return val if math.isfinite(val) else None
 
         if fmt == 'csv':
             def generate_csv():

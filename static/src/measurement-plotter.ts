@@ -10,6 +10,8 @@ export class MeasurementPlotter {
     private baseInterval: number = 1000;
     private maxInterval: number = 10000;
     private currentInterval: number = this.baseInterval;
+    private pollGeneration: number = 0;
+    private abortController: AbortController | null = null;
     public onFinished?: () => void;
 
 
@@ -29,18 +31,27 @@ export class MeasurementPlotter {
 
     
     startPlotting(interval: number): void {
+        this.stopPlotting();
         this.isPolling = true;
+        const gen = ++this.pollGeneration;
         this.baseInterval = interval;
         this.currentInterval = this.baseInterval;
 
         const poll = async () => {
-            if (!this.isPolling) return;
+            if (!this.isPolling || gen !== this.pollGeneration) return;
+
+            const ctrl = new AbortController();
+            this.abortController = ctrl;
 
             try {
-                await this.update();
+                await this.update(ctrl.signal);
+                if (!this.isPolling || gen !== this.pollGeneration) return;
                 // Finished campaigns should fetch all remaining batches immediately without waiting
                 this.currentInterval = this.end_datetime !== null ? 0 : this.baseInterval;
             } catch (error) {
+                if (!this.isPolling || gen !== this.pollGeneration || (error as any)?.name === 'AbortError') {
+                    return;
+                }
                 if (this.end_datetime !== null) {
                     this.stopPlotting();
                     this.onFinished?.();
@@ -48,9 +59,13 @@ export class MeasurementPlotter {
                 }
                 this.currentInterval = Math.min(this.currentInterval * 2, this.maxInterval); // Exponential backoff
                 console.error('No new "' + this.url_endpoint_type + '" data available. Next poll in ' + this.currentInterval/1000 + 's');
+            } finally {
+                if (this.abortController === ctrl) {
+                    this.abortController = null;
+                }
             }
 
-            if (this.isPolling) {
+            if (this.isPolling && gen === this.pollGeneration) {
                 this.interval_id = setTimeout(poll, this.currentInterval);
             }
         };
@@ -58,20 +73,28 @@ export class MeasurementPlotter {
     }
 
     stopPlotting(): void {
+        this.pollGeneration++;
         this.isPolling = false;
         if (this.interval_id) {
             clearTimeout(this.interval_id);
             this.interval_id = null;
         }
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
     }
   
-    async update(): Promise<void> {
-        const response = await fetch(this.getRequestUrl());
+    async update(signal?: AbortSignal): Promise<void> {
+        const response = await fetch(this.getRequestUrl(), signal ? { signal } : undefined);
         if (!response.ok) {
             throw new Error("No data available.");
         }
 
         const data = await response.json();
+        if (signal?.aborted) {
+            return;
+        }
         this.plotData(data);
     }
 
