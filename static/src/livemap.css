@@ -11,10 +11,6 @@ body {
     left: 0;
 }
 
-.leaflet-overlay-pane svg {
-    filter: drop-shadow(0 0 1.5px rgba(15, 23, 42, 0.85)) drop-shadow(0 0 1px rgba(15, 23, 42, 0.85));
-}
-
 #control-panel {
     position: fixed;
     bottom: 0;

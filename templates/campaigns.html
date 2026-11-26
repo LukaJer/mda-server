@@ -1159,7 +1159,59 @@
         }
 
         let pollTimer = null;
+        let liveSource = null;
+        let sseFailCount = 0;
         let gpsHasLiveFix = false;
+
+        function stopLiveStream() {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+            if (liveSource) {
+                liveSource.close();
+                liveSource = null;
+            }
+        }
+
+        function startLiveStream() {
+            if (document.hidden) {
+                stopLiveStream();
+                return;
+            }
+            if (typeof EventSource === 'undefined') {
+                pollLive();
+                return;
+            }
+            stopLiveStream();
+            const dot = document.getElementById('poll-dot');
+            const status = document.getElementById('poll-status');
+            const updated = document.getElementById('last-updated');
+
+            liveSource = new EventSource('/api/live/stream');
+            liveSource.onopen = () => {
+                sseFailCount = 0;
+                dot.className = 'dot live';
+                status.textContent = 'Server Online (Live)';
+            };
+            liveSource.onmessage = (ev) => {
+                try {
+                    const data = JSON.parse(ev.data);
+                    sseFailCount = 0;
+                    updateTelemetry(data);
+                    dot.className = 'dot live';
+                    status.textContent = 'Server Online (Live)';
+                    updated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour12: false })}`;
+                } catch (e) {}
+            };
+            liveSource.onerror = () => {
+                sseFailCount += 1;
+                dot.className = 'dot offline';
+                status.textContent = 'Reconnecting...';
+                if (sseFailCount >= 3) {
+                    stopLiveStream();
+                    pollLive();
+                }
+            };
+        }
 
         document.getElementById('start-campaign-form')?.addEventListener('submit', (e) => {
             if (!gpsHasLiveFix) {
@@ -1194,22 +1246,25 @@
                 status.textContent = 'Server Unreachable';
             } finally {
                 clearTimeout(pollTimer);
-                if (!document.hidden) {
+                if (!document.hidden && !liveSource) {
                     pollTimer = setTimeout(pollLive, nextMs);
                 }
             }
         }
 
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                clearTimeout(pollTimer);
-                pollLive();
+            if (document.hidden) {
+                stopLiveStream();
+            } else {
+                startLiveStream();
                 if (activeTab === 'diagnostics') {
                     clearTimeout(diagTimer);
                     pollDiagnostics();
                 }
             }
         });
+
+        window.addEventListener('beforeunload', stopLiveStream);
 
         // Tabs & Diagnostics polling
         let activeTab = 'dashboard';
@@ -1476,7 +1531,7 @@
         });
 
         buildTelemetryCards();
-        pollLive();
+        startLiveStream();
     </script>
 </body>
 </html>

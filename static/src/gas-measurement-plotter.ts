@@ -1,7 +1,6 @@
 import * as L from 'leaflet';
 import 'leaflet-rotatedmarker';
 import { MeasurementPlotter } from './measurement-plotter';
-import { Feature, FeatureCollection, GeoJsonObject } from 'geojson';
 import { Slider } from './gas-slider';
 import { NumericDisplay } from './numeric-display';
 
@@ -13,7 +12,7 @@ export const COLOR_PALETTES: { [key: string]: string[] } = {
 
 export class GasMeasurementPlotter extends MeasurementPlotter {
     map: L.Map
-    gas_measurement_layer: L.GeoJSON
+    gas_measurement_layer: L.FeatureGroup
     marker: L.Marker
     gas_name: string;
     focus: boolean = false;
@@ -25,6 +24,7 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     private unit: string;           
     private legend: L.Control;
     private is_visible: boolean = false;
+    private renderer: L.Canvas;
 
 
     constructor(
@@ -38,13 +38,15 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             numeric_display: NumericDisplay,
             start_datetime: Date, 
             end_datetime: Date | null = null,
-            palette: string = 'default'
+            palette: string = 'default',
+            renderer?: L.Canvas
         ) {
         super(start_datetime, end_datetime, 'gas');
         this.colors = COLOR_PALETTES[palette] || COLOR_PALETTES.default;
         this.map = map;
         this.marker = marker;
-        this.gas_measurement_layer = L.geoJSON();
+        this.renderer = renderer || L.canvas({ padding: 0.5 });
+        this.gas_measurement_layer = L.featureGroup();
         this.gas_name = type;
 
         this.minimum_concentration = minimum_concentration;
@@ -91,37 +93,27 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             Number.isFinite(this.previous_measurement.latitude) &&
             Number.isFinite(this.previous_measurement.longitude)
         ) {
-            const feature: Feature = {
-                "type": "Feature",
-                "properties": {
-                    "type": measurement.type,
-                    "datetime": measurement.datetime,
-                    "concentration": measurement.concentration,
-                    "unit": measurement.unit,
-                },
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [
-                        [measurement.longitude, measurement.latitude],
-                        [this.previous_measurement.longitude, this.previous_measurement.latitude]
-                    ]
-                }
-            };
+            const latlngs: L.LatLngExpression[] = [
+                [this.previous_measurement.latitude, this.previous_measurement.longitude],
+                [measurement.latitude, measurement.longitude]
+            ];
 
-            L.geoJson(feature, {
-                style: function () {
-                    return {
-                        "color": color,
-                        "opacity": 1,
-                        "weight": 7
-                    }
-                },
-                onEachFeature: function (feature, layer) {
-                    if (feature.properties) {
-                        layer.bindPopup(`${feature.properties.datetime}<br>${feature.properties.type}: <b>${feature.properties.concentration}</b>${feature.properties.unit}`);
-                    }
-                }
+            L.polyline(latlngs, {
+                color: '#0f172a',
+                opacity: 0.55,
+                weight: 9,
+                interactive: false,
+                renderer: this.renderer,
             }).addTo(this.gas_measurement_layer);
+
+            const line = L.polyline(latlngs, {
+                color: color,
+                opacity: 1,
+                weight: 6,
+                renderer: this.renderer,
+            });
+            this.attachLazyPopup(line, measurement);
+            line.addTo(this.gas_measurement_layer);
         } else {
             const pointMarker = L.circleMarker([measurement.latitude, measurement.longitude], {
                 radius: 4,
@@ -129,8 +121,9 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
                 fillColor: color,
                 fillOpacity: 1,
                 weight: 1,
+                renderer: this.renderer,
             });
-            pointMarker.bindPopup(`${measurement.datetime}<br>${measurement.type}: <b>${measurement.concentration}</b>${measurement.unit}`);
+            this.attachLazyPopup(pointMarker, measurement);
             pointMarker.addTo(this.gas_measurement_layer);
         }
 
@@ -138,6 +131,15 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             this.map.panTo(new L.LatLng(measurement.latitude, measurement.longitude));
         }
 
+    }
+
+    private attachLazyPopup(layer: L.Layer, measurement: any): void {
+        layer.on('click', (e: L.LeafletMouseEvent) => {
+            L.popup()
+                .setLatLng(e.latlng)
+                .setContent(`${measurement.datetime}<br>${measurement.type}: <b>${measurement.concentration}</b>${measurement.unit}`)
+                .openOn(this.map);
+        });
     }
 
     setFocus(focus: boolean): void {

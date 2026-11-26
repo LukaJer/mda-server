@@ -170,57 +170,79 @@ async function main() {
         : Object.keys(SPECIES);
     const activeSpeciesKeys = speciesKeys.length > 0 ? speciesKeys : Object.keys(SPECIES);
 
-    const gas_layers: { [key: string]: { plotter: GasMeasurementPlotter } } = {};
+    const isLive = campaign.end === null;
+    const palette = (typeof mapSettings !== 'undefined' && mapSettings?.color_palette) ? mapSettings.color_palette : 'default';
+    const canvasRenderer = L.canvas({ padding: 0.5 });
 
-    for (const name of activeSpeciesKeys) {
+    const gas_layers: { [key: string]: { plotter: GasMeasurementPlotter; finished: boolean } } = {};
+    let active_plotter: GasMeasurementPlotter | null = null;
+    let hasFittedInitialBounds = false;
+    let isFocused = isLive;
+
+    async function getOrCreatePlotter(name: string): Promise<GasMeasurementPlotter | null> {
+        if (name in gas_layers) {
+            return gas_layers[name].plotter;
+        }
         const cfg = SPECIES[name];
+        if (!cfg) {
+            return null;
+        }
+
         let min_value: number;
         let max_value: number;
-
         if (cfg.range.kind === "fixed") {
             min_value = cfg.range.min;
             max_value = cfg.range.max;
         } else {
-            
             min_value = await getBaseConcentration(campaign_id, cfg.range.baselineGas, cfg.range.fallback);
             max_value = min_value + Number(getUrlParameter(cfg.range.spanParam, "100")) * cfg.range.spanScale;
         }
 
-        const palette = (typeof mapSettings !== 'undefined' && mapSettings?.color_palette) ? mapSettings.color_palette : 'default';
+        if (name in gas_layers) {
+            return gas_layers[name].plotter;
+        }
+
         const plotter = new GasMeasurementPlotter(
             map, marker, name, min_value, max_value, cfg.unit,
-            gas_slider, gas_display, campaign.start, campaign.end, palette
+            gas_slider, gas_display, campaign.start, campaign.end, palette, canvasRenderer
         );
-        plotter.startPlotting(1000);
-        gas_layers[name] = { plotter: plotter };
+        const entry = { plotter, finished: false };
+        plotter.onFinished = () => {
+            entry.finished = true;
+            if (!isLive && !hasFittedInitialBounds && active_plotter === plotter) {
+                hasFittedInitialBounds = true;
+                const bounds = plotter.getBounds();
+                if (bounds && bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [24, 24] });
+                }
+            }
+        };
+        gas_layers[name] = entry;
+        return plotter;
     }
 
     const wind_plotter = new WindMeasurementPlotter(map, campaign.start, campaign.end);
     wind_plotter.startPlotting(1000);
 
-    const isLive = campaign.end === null;
-    const start_key = (initial_gas in gas_layers) ? initial_gas : Object.keys(gas_layers)[0];
-    let active_plotter: GasMeasurementPlotter | null = gas_layers[start_key]?.plotter ?? null;
+    const start_key = activeSpeciesKeys.includes(initial_gas) ? initial_gas : activeSpeciesKeys[0];
 
     const focus_control = new FocusControl(
         { position: 'topleft' },
-        (focus: boolean) => active_plotter?.setFocus(focus),
+        (focus: boolean) => {
+            isFocused = focus;
+            active_plotter?.setFocus(focus);
+        },
         isLive
     );
     const wind_control = new WindControl({ position: 'topleft' }, (show: boolean) => wind_plotter.show(show))
 
+    active_plotter = await getOrCreatePlotter(start_key);
     if (active_plotter) {
         active_plotter.show(true);
-        if (isLive) {
+        if (isFocused) {
             active_plotter.setFocus(true);
-        } else {
-            active_plotter.onFinished = () => {
-                const bounds = active_plotter?.getBounds();
-                if (bounds && bounds.isValid()) {
-                    map.fitBounds(bounds, { padding: [24, 24] });
-                }
-            };
         }
+        active_plotter.startPlotting(1000);
         gas_slider.updateGasType(start_key, active_plotter.measurements);
         if (start_key !== initial_gas) {
             gas_display.changeGasType(start_key, unitFor(start_key));
@@ -231,31 +253,40 @@ async function main() {
         }
     }
 
-
-
-    document.getElementById('gas-selector')?.addEventListener('change', (event) => {
+    let switchSeq = 0;
+    document.getElementById('gas-selector')?.addEventListener('change', async (event) => {
         const target = event.target as HTMLSelectElement;
         const selectedLayerKey = target.value;
+        const seq = ++switchSeq;
 
-        const wasFocused = active_plotter ? active_plotter.focus : false;
-        if (wasFocused && active_plotter) {
-            active_plotter.setFocus(false);
+        if (active_plotter) {
+            active_plotter.stopPlotting();
+            if (active_plotter.focus) {
+                active_plotter.setFocus(false);
+            }
+            active_plotter.show(false);
+            active_plotter = null;
         }
 
-        Object.values(gas_layers).forEach(gas => gas.plotter.show(false));
+        const nextPlotter = await getOrCreatePlotter(selectedLayerKey);
+        if (seq !== switchSeq || !nextPlotter) {
+            return;
+        }
 
-        if (selectedLayerKey in gas_layers) {
-            active_plotter = gas_layers[selectedLayerKey].plotter;
-            active_plotter.show(true);
-            if (wasFocused) {
-                active_plotter.setFocus(true);
-            }
-            gas_slider.updateGasType(selectedLayerKey, active_plotter.measurements)
-            
-            gas_display.changeGasType(selectedLayerKey, unitFor(selectedLayerKey));
-            if (active_plotter.previous_measurement && Number.isFinite(active_plotter.previous_measurement.concentration)) {
-                gas_display.updateValue(active_plotter.previous_measurement.concentration);
-            }
+        active_plotter = nextPlotter;
+        active_plotter.show(true);
+        if (isFocused) {
+            active_plotter.setFocus(true);
+        }
+        gas_slider.updateGasType(selectedLayerKey, active_plotter.measurements);
+        gas_display.changeGasType(selectedLayerKey, unitFor(selectedLayerKey));
+        if (active_plotter.previous_measurement && Number.isFinite(active_plotter.previous_measurement.concentration)) {
+            gas_display.updateValue(active_plotter.previous_measurement.concentration);
+        }
+
+        const entry = gas_layers[selectedLayerKey];
+        if (isLive || !entry.finished) {
+            active_plotter.startPlotting(1000);
         }
     });
 
