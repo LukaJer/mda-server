@@ -4,7 +4,7 @@ from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base_model import db
-from util.api_helper import Request
+from util.api_helper import ApiHelper, Request
 
 
 class Log(db.Model):
@@ -16,7 +16,7 @@ class Log(db.Model):
     @staticmethod
     def create_from_json(json: dict) -> "Log":
         return Log(
-            datetime=datetime.fromisoformat(json["datetime"]),
+            datetime=ApiHelper.parse_iso_datetime(json["datetime"]),
             sensor=json["sensor"],
             description=json["description"]
         )

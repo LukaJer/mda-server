@@ -13,7 +13,7 @@ export class WindMeasurementPlotter extends MeasurementPlotter {
     constructor(map: L.Map, start_datetime: Date, end_datetime: Date | null = null) {
         super(start_datetime, end_datetime, 'wind');
         this.map = map;
-        this.wind_vanes = L.layerGroup().addTo(this.map);
+        this.wind_vanes = L.layerGroup();
         this.wind_icons = new Map();
 
         for (let i = 1; i <= 20; i++) {
@@ -53,18 +53,20 @@ export class WindMeasurementPlotter extends MeasurementPlotter {
     }
 
     plotData(data: any[]): void {
+        let new_measurements = false;
         data.forEach((measurement: any) => {
-            if (this.previous_measurement === null){
+            if (!this.measurements.has(measurement.end_datetime)) {
+                this.start_datetime = new Date(measurement.end_datetime);
+                this.measurements.set(measurement.end_datetime, measurement);
+                this.drawMeasurement(measurement);
                 this.previous_measurement = measurement;
-            } else {
-                if (!this.measurements.has(measurement.end_datetime)){
-                    this.start_datetime = new Date(measurement.end_datetime);
-                    this.drawMeasurement(measurement);
-                    this.previous_measurement = measurement;
-                }
+                new_measurements = true;
             }
-            this.measurements.set(measurement.end_datetime, measurement);
         });
+
+        if (!new_measurements) {
+            throw new Error("No new data available.");
+        }
     }
 
     getRequestUrl(): string {

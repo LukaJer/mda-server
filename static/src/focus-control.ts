@@ -7,9 +7,10 @@ export class FocusControl extends L.Control {
   private button!: HTMLAnchorElement;
   private isActive = false;
 
-  constructor(options: L.ControlOptions, setFocusCallback: (focus: boolean) => void) {
+  constructor(options: L.ControlOptions, setFocusCallback: (focus: boolean) => void, initialActive = false) {
     super(options);
     this.setFocusCallback = setFocusCallback;
+    this.isActive = initialActive;
     this.aimIcon = new AimIcon();
   }
   onAdd(map: L.Map): HTMLElement {
@@ -25,6 +26,7 @@ export class FocusControl extends L.Control {
     this.button.style.justifyContent = 'center';
 
     this.button.appendChild(this.aimIcon.getElement());
+    this.updateColor();
 
 
     L.DomEvent.on(this.button, 'click', () => {

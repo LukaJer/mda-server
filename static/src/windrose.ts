@@ -2,11 +2,21 @@ import * as L from 'leaflet';
 import { getUrlParameter } from './url-helper';
 
 export async function addWindroseToMap(map: L.Map, campaign: any){
-    var start = formatDateToString(campaign.start);
-    var end = formatDateToString(campaign.end);
-    var station = getUrlParameter('station', 'MIM01');
+    const start = formatDateToString(campaign.start);
+    const endDate = campaign.end ?? new Date();
+    const end = formatDateToString(endDate);
+    const station = getUrlParameter('station', 'MIM01') ?? 'MIM01';
 
-    const wind_mean_data = await fetchWindMeanData(start, end, station);
+    let wind_mean_data: WindMeanData | null = null;
+    try {
+        wind_mean_data = await fetchWindMeanData(start, end, station);
+    } catch (error) {
+        console.error('Failed to fetch wind mean data:', error);
+    }
+
+    const speedLabel = (wind_mean_data && Number.isFinite(wind_mean_data.speed))
+        ? `Wind mean ${wind_mean_data.speed.toFixed(1)} m/s`
+        : 'Wind mean N/A';
 
     var WindroseLegend = L.Control.extend({
         options: {
@@ -15,7 +25,7 @@ export async function addWindroseToMap(map: L.Map, campaign: any){
 
         onAdd: function (map: L.Map) {
             var div = L.DomUtil.create('div', 'info legend');
-            div.innerHTML += `<h4>Wind mean ${wind_mean_data.speed.toFixed(1)} m/s</h4>`;
+            div.innerHTML += `<h4>${speedLabel}</h4>`;
 
             var img = L.DomUtil.create('img', 'windrose-legend', div);
             img.src = `/windrose?start=${start}&end=${end}&station=${station}`;

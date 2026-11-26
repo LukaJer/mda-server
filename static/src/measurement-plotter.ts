@@ -10,6 +10,7 @@ export class MeasurementPlotter {
     private baseInterval: number = 1000;
     private maxInterval: number = 10000;
     private currentInterval: number = this.baseInterval;
+    public onFinished?: () => void;
 
 
 
@@ -37,8 +38,14 @@ export class MeasurementPlotter {
 
             try {
                 await this.update();
-                this.currentInterval = this.baseInterval; // Reset interval on success
+                // Finished campaigns should fetch all remaining batches immediately without waiting
+                this.currentInterval = this.end_datetime !== null ? 0 : this.baseInterval;
             } catch (error) {
+                if (this.end_datetime !== null) {
+                    this.stopPlotting();
+                    this.onFinished?.();
+                    return;
+                }
                 this.currentInterval = Math.min(this.currentInterval * 2, this.maxInterval); // Exponential backoff
                 console.error('No new "' + this.url_endpoint_type + '" data available. Next poll in ' + this.currentInterval/1000 + 's');
             }
@@ -69,19 +76,14 @@ export class MeasurementPlotter {
     }
 
     plotData(data: any[]): void {
-        var new_measurements: Boolean = false;
+        let new_measurements = false;
         data.forEach((measurement) => {
-            if (this.previous_measurement === null) {
-                this.previous_measurement = measurement;
+            if (!this.measurements.has(measurement.datetime)) {
+                this.start_datetime = new Date(measurement.datetime);
                 this.measurements.set(measurement.datetime, measurement);
-            } else {
-                if (!this.measurements.has(measurement.datetime)) {
-                    this.start_datetime = new Date(measurement.datetime);
-                    this.drawMeasurement(measurement);
-                    this.previous_measurement = measurement;
-                    this.measurements.set(measurement.datetime, measurement);
-                    new_measurements = true;
-                }
+                this.drawMeasurement(measurement);
+                this.previous_measurement = measurement;
+                new_measurements = true;
             }
         });
 
@@ -101,8 +103,10 @@ export class MeasurementPlotter {
         const hours = String(datetime.getHours()).padStart(2, '0');
         const minutes = String(datetime.getMinutes()).padStart(2, '0');
         const seconds = String(datetime.getSeconds()).padStart(2, '0');
+        const milliseconds = datetime.getMilliseconds();
+        const frac = milliseconds > 0 ? `.${String(milliseconds).padStart(3, '0')}` : '';
 
-        const formatted_string = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+        const formatted_string = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${frac}`;
         return formatted_string;
     }
 

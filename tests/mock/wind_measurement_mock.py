@@ -1,5 +1,4 @@
 import math
-import random
 import time
 from datetime import datetime
 
@@ -19,4 +18,4 @@ class WindMeasurementMock(MeasurementMock):
                 heading=0,
                 speed=20.0 * math.sin(math.radians(now.second)) + 20.0)
             self._post_measurement(measurement, '/measurement/wind', )
-            time.sleep(random.randint(500, 1500)/1000)
+            time.sleep(1.0)

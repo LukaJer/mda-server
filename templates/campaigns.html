@@ -2,55 +2,1536 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Live Map</title>
-</head>
-<style>
-form {
-  border: 2px solid yellowgreen;
-  margin: 2px;
-  padding: 2px;
-}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EnvBike — Dashboard</title>
+    <style>
+        :root {
+            --bg: #f1f5f9;
+            --surface: #ffffff;
+            --surface-alt: #f8fafc;
+            --border: #cbd5e1;
+            --text: #0f172a;
+            --muted: #64748b;
+            --accent: #0284c7;
+            --accent-hover: #0369a1;
+            --green: #16a34a;
+            --amber: #d97706;
+            --red: #dc2626;
+        }
+        * { box-sizing: border-box; }
+        html, body {
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+        body {
+            margin: 0;
+            padding: 20px 16px 48px;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.45;
+        }
+        .container {
+            max-width: 1440px;
+            width: 100%;
+            margin: 0 auto;
+            display: grid;
+            gap: 22px;
+        }
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            letter-spacing: -0.02em;
+        }
+        .subtitle {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+        }
+        .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+        .dot.stale { background: var(--amber); }
+        .dot.offline { background: var(--red); }
 
-.campaign {
-  border: 2px solid black;
-  margin: 2px;
-  padding: 2px;
-}
-</style>
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px 20px;
+            min-width: 0;
+        }
+        .card h2 {
+            margin: 0 0 14px;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        /* Live telemetry grouped by instrument */
+        .instruments-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+            gap: 16px;
+        }
+        .instrument-card {
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .instrument-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .instrument-title {
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+        .instrument-sub {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+        .channels-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+        }
+        .channel-item {
+            background: #ffffff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .channel-label {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        .sensor-val {
+            font-size: 1.35rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .sensor-unit {
+            font-size: 0.76rem;
+            font-weight: 500;
+            color: var(--muted);
+            margin-left: 3px;
+        }
+        .sensor-meta {
+            font-size: 0.72rem;
+            color: var(--muted);
+        }
+        .status-line {
+            font-size: 0.76rem;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #f1f5f9;
+            color: var(--muted);
+            border: 1px solid var(--border);
+        }
+        .status-line.ok {
+            background: #f0fdf4;
+            color: #15803d;
+            border-color: #bbf7d0;
+        }
+        .status-line.warn {
+            background: #fffbeb;
+            color: #b45309;
+            border-color: #fde68a;
+        }
+        .status-line.err {
+            background: #fef2f2;
+            color: #b91c1c;
+            border-color: #fecaca;
+        }
+
+        /* Active campaign banner */
+        .active-banner {
+            border-color: rgba(34, 197, 94, 0.5);
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), var(--surface));
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+        .active-info h3 {
+            margin: 0 0 4px;
+            font-size: 1.15rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .active-info p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+
+        /* Forms & buttons */
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            align-items: end;
+        }
+        label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        input[type="text"], input[type="datetime-local"] {
+            width: 100%;
+            padding: 9px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 9px 15px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            font-size: 0.88rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .btn-primary { background: var(--accent); color: #ffffff; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-success { background: var(--green); color: #ffffff; }
+        .btn-danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+        .btn-danger:hover { background: #fee2e2; }
+        .btn-ghost { background: var(--surface-alt); color: var(--text); border-color: var(--border); }
+        .btn-ghost:hover { border-color: var(--accent); }
+        .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+
+        details {
+            margin-top: 14px;
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+        }
+        summary {
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 0.85rem;
+            user-select: none;
+        }
+        summary:hover { color: var(--text); }
+
+        /* Campaign table */
+        .table-wrap { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        th {
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .actions-cell {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .badge-live {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            background: #dcfce7;
+            color: #15803d;
+        }
+        .badge-warn {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #fde68a;
+            margin-left: 6px;
+        }
+        /* Tabs & Diagnostics */
+        .header-right {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .tabs-bar {
+            display: inline-flex;
+            gap: 4px;
+        }
+        .tab-btn {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #ffffff;
+        }
+        .tab-panel { display: none; gap: 22px; }
+        .tab-panel.active { display: grid; }
+        .diag-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+        .diag-controls select {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 0.88rem;
+        }
+        /* Settings tab layout */
+        .settings-stack {
+            display: grid;
+            gap: 16px;
+        }
+        .settings-group {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 16px;
+        }
+        .settings-group-title {
+            font-size: 0.82rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+            margin-bottom: 10px;
+        }
+        .settings-two-col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+        }
+        .settings-select {
+            width: 100%;
+            padding: 9px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+        .layer-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 10px;
+        }
+        .layer-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            cursor: pointer;
+            margin: 0;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+        .layer-card:has(input:checked) {
+            border-color: var(--accent);
+            background: rgba(37, 99, 235, 0.04);
+        }
+        .layer-card input {
+            margin-top: 3px;
+            accent-color: var(--accent);
+        }
+        .layer-card-title {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .layer-card-meta {
+            font-size: 0.76rem;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+        .bbox-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+        }
+        .bbox-grid input {
+            background: var(--surface);
+            font-variant-numeric: tabular-nums;
+        }
+        .zoom-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .zoom-card {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            cursor: pointer;
+            margin: 0;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+        .zoom-card:has(input:checked) {
+            border-color: var(--accent);
+            background: rgba(37, 99, 235, 0.05);
+        }
+        .zoom-card input {
+            accent-color: var(--accent);
+        }
+        .zoom-card-code {
+            font-weight: 700;
+            font-size: 0.86rem;
+            color: var(--text);
+        }
+        .zoom-card-desc {
+            font-size: 0.74rem;
+            color: var(--muted);
+            line-height: 1.25;
+        }
+        .cache-summary-box {
+            display: grid;
+            gap: 4px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            font-size: 0.82rem;
+            color: var(--muted);
+        }
+        .cache-summary-box strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+        .settings-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .progress-track {
+            width: 100%;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--border);
+            overflow: hidden;
+            margin-top: 8px;
+            display: none;
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--accent);
+            transition: width 0.25s ease;
+        }
+        .diag-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.88rem;
+            color: var(--text);
+            margin: 0;
+            cursor: pointer;
+        }
+        .log-msg-err { color: #f87171; }
+        .log-msg-warn { color: #fbbf24; }
+        .log-msg-ok { color: #4ade80; }
+        .diag-terminal {
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.82rem;
+            line-height: 1.5;
+            height: 62vh;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .diag-line { margin: 0; }
+        .diag-ts { color: #64748b; }
+        .diag-src { color: #38bdf8; font-weight: 600; }
+        .shell-form {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .shell-prompt {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.82rem;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .shell-input {
+            flex: 1;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #0f172a;
+            color: #f1f5f9;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.85rem;
+        }
+        @media (max-width: 640px) {
+            body {
+                padding: 12px 10px 32px;
+            }
+            .container {
+                gap: 14px;
+            }
+            .card {
+                padding: 14px 12px;
+            }
+            header h1 {
+                font-size: 1.25rem;
+            }
+            .instruments-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .channels-grid {
+                grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+            }
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            .btn {
+                min-height: 40px;
+            }
+            .btn-sm {
+                min-height: 32px;
+                padding: 5px 10px;
+                font-size: 0.78rem;
+            }
+            .campaigns-table thead {
+                display: none;
+            }
+            .campaigns-table,
+            .campaigns-table tbody,
+            .campaigns-table tr,
+            .campaigns-table td {
+                display: block;
+                width: 100%;
+            }
+            .campaigns-table tr {
+                background: var(--surface-alt);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 10px 12px;
+                margin-bottom: 10px;
+            }
+            .campaigns-table tr:last-child {
+                margin-bottom: 0;
+            }
+            .campaigns-table td {
+                border: none;
+                padding: 2px 0;
+            }
+            .campaigns-table td.camp-time,
+            .campaigns-table td.camp-meta {
+                display: inline-block;
+                width: auto;
+                color: var(--muted);
+                font-size: 0.78rem;
+                margin-right: 6px;
+                white-space: nowrap;
+            }
+            .campaigns-table td.camp-time + td.camp-time::before {
+                content: "\2192\00a0";
+                display: inline-block;
+                color: var(--muted);
+                font-size: 1rem;
+                line-height: 1;
+                transform: translateY(-2px);
+                margin-right: 2px;
+            }
+            .campaigns-table td.camp-actions {
+                margin-top: 8px;
+                padding-top: 8px;
+                border-top: 1px solid var(--border);
+            }
+        }
+    </style>
+</head>
 <body>
-    <h1>Measurement System</h1>
-      <p>Measurement system is {% if enable_measurements %}ACTIVE{% else %}DEACTIVATED{% endif %}</p>
-      {% if enable_measurements %}
-      <a href="/enable-measurements/0">Disable system</a>
-      {% else %}
-      <a href="/enable-measurements/1">Enable system</a>
-      {% endif %}
-    <h1>Campaigns</h1>
-    <form action="/campaign" method="post">
-      <label for="start">Start:</label>
-      <input type="datetime-local" name="start" id="start" value="{{now.isoformat(timespec='minutes')}}"><br>
-      <label for="end">End:</label>
-      <input type="datetime-local" name="end" id="end"><br>
-      <label for="name">Name:</label>
-      <input type="text" name="name" id="name"><br>
-      <label for="author">Author:</label>
-      <input type="text" name="author" id="author"><br>
-      <label for="description">Description:</label>
-      <input type="text" name="description" id="description"><br>
-      <input type="submit" value="Create">
-    </form>
-    {% for campaign in campaigns %}
-    <div class="campaign">
-      <p>Start: {{campaign.start.strftime('%a %d %B %Y, %H:%M')}}</p>
-      <p>End: {% if campaign.end %}{{campaign.end.strftime('%a %d %B %Y, %H:%M')}}{% endif %}</p>
-      <p>Name: {% if campaign.name %}{{campaign.name}}{% endif %}</p>
-      <p>Author: {% if campaign.author %}{{campaign.author}}{% endif %}</p>
-      <p>Description: {% if campaign.description %}{{campaign.description}}{% endif %}</p>
-      <a href="/campaign/edit/{{campaign.id}}">Edit</a>
-      <a href="/map/{{campaign.id}}">Show</a>
-      <a href="/campaign/delete/{{campaign.id}}">Delete</a>
+    <div class="container">
+        <header>
+            <div>
+                <h1>EnvBike — Mobile Data Acquisition</h1>
+            </div>
+            <div class="header-right">
+                <nav class="tabs-bar" role="tablist">
+                    <button type="button" class="tab-btn active" data-tab="dashboard">Dashboard</button>
+                    <button type="button" class="tab-btn" data-tab="diagnostics">Diagnostics</button>
+                    <button type="button" class="tab-btn" data-tab="settings">Settings</button>
+                </nav>
+                <div class="pill">
+                    <span class="dot" id="poll-dot"></span>
+                    <span id="poll-status">Connecting...</span>
+                </div>
+            </div>
+        </header>
+
+        <div id="tab-dashboard" class="tab-panel active">
+
+        <!-- Active Campaign Banner (if any campaign has no end time) -->
+        {% set active_campaigns = campaigns | selectattr('end', 'none') | list %}
+        {% for ac in active_campaigns %}
+        <div class="card active-banner" {% if not enable_measurements %}style="border-color: rgba(217, 119, 6, 0.55); background: linear-gradient(135deg, rgba(217, 119, 6, 0.08), var(--surface));"{% endif %}>
+            <div class="active-info">
+                <h3>
+                    <span class="dot {{ 'live' if enable_measurements else 'stale' }}"></span>
+                    Active: {{ ac.name or ('Campaign #' ~ ac.id) }}
+                    {% if not enable_measurements %}
+                        <span class="badge-warn">PAUSED</span>
+                    {% endif %}
+                </h3>
+                <p>Started {{ ac.start.strftime('%Y.%m.%d %H:%M:%S') }}{% if ac.author %} &middot; {{ ac.author }}{% endif %}{% if ac.description %} &middot; {{ ac.description }}{% endif %}</p>
+            </div>
+            <div class="actions-cell">
+                <a class="btn btn-primary" href="/map/{{ ac.id }}">Open Live Map</a>
+                {% if enable_measurements %}
+                    <a class="btn btn-ghost" href="/enable-measurements/0">Pause Recording</a>
+                {% else %}
+                    <a class="btn btn-success" href="/enable-measurements/1">Resume Recording</a>
+                {% endif %}
+                <a class="btn btn-ghost" href="/campaign/{{ ac.id }}/download?format=json">JSON</a>
+                <a class="btn btn-ghost" href="/campaign/{{ ac.id }}/download?format=csv">CSV</a>
+                <form action="/campaign/{{ ac.id }}/stop" method="post" style="margin:0;">
+                    <button type="submit" class="btn btn-danger">Stop Campaign</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Live Instrument Telemetry -->
+        <section class="card">
+            <h2>
+                <span>Live Instruments</span>
+                <span class="subtitle" id="last-updated">Waiting for data...</span>
+            </h2>
+            <div class="instruments-grid" id="telemetry-grid">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Start New Campaign -->
+        <section class="card">
+            <h2>Start New Campaign</h2>
+            <div id="no-gps-warning" class="badge-warn" style="display:none; margin-bottom:12px; padding:8px 12px; font-size:0.85rem;">
+                &#9888; No GPS fix detected — measurements will use local system time and lack coordinates until GPS is acquired.
+            </div>
+            <form id="start-campaign-form" action="/campaign/start" method="post">
+                <div class="form-row">
+                    <div>
+                        <label for="quick-name">Campaign Name (optional)</label>
+                        <input type="text" name="name" id="quick-name" placeholder="e.g. Morning Ride">
+                    </div>
+                    <div>
+                        <label for="quick-author">Author</label>
+                        <input type="text" name="author" id="quick-author" placeholder="Rider / Operator">
+                    </div>
+                    <div>
+                        <label for="quick-desc">Description</label>
+                        <input type="text" name="description" id="quick-desc" placeholder="Route or notes">
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-success" style="width:100%;">Start Now</button>
+                    </div>
+                </div>
+            </form>
+
+            <details>
+                <summary>Create campaign with custom start / end times</summary>
+                <form action="/campaign" method="post" style="margin-top:12px;">
+                    <div class="form-row">
+                        <div>
+                            <label for="start">Start</label>
+                            <input type="datetime-local" name="start" id="start" value="{{ now.isoformat(timespec='minutes') }}" required>
+                        </div>
+                        <div>
+                            <label for="end">End (optional)</label>
+                            <input type="datetime-local" name="end" id="end">
+                        </div>
+                        <div>
+                            <label for="name">Name</label>
+                            <input type="text" name="name" id="name">
+                        </div>
+                        <div>
+                            <label for="author">Author</label>
+                            <input type="text" name="author" id="author">
+                        </div>
+                        <div>
+                            <label for="description">Description</label>
+                            <input type="text" name="description" id="description">
+                        </div>
+                        <div>
+                            <button type="submit" class="btn btn-primary" style="width:100%;">Create</button>
+                        </div>
+                    </div>
+                </form>
+            </details>
+        </section>
+
+        <!-- Campaigns List -->
+        <section class="card">
+            <h2>Campaigns ({{ campaigns | length }})</h2>
+            {% if campaigns %}
+            <div class="table-wrap">
+                <table class="campaigns-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Start</th>
+                            <th>End</th>
+                            <th>Author</th>
+                            <th>Description</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for campaign in campaigns %}
+                        <tr>
+                            <td>
+                                <strong>{{ campaign.name or ('Campaign #' ~ campaign.id) }}</strong>
+                                {% if campaign.id in short_campaigns %}
+                                    <span class="badge-warn" title="Campaign has less than 120 seconds of recorded data">&#9888; &lt; 120s data</span>
+                                {% endif %}
+                            </td>
+                            <td class="camp-time">{{ campaign.start.strftime('%Y.%m.%d %H:%M') }}</td>
+                            <td class="camp-time">
+                                {% if campaign.end %}
+                                    {{ campaign.end.strftime('%Y.%m.%d %H:%M') }}
+                                {% else %}
+                                    <span class="badge-live">LIVE</span>
+                                {% endif %}
+                            </td>
+                            <td class="camp-meta">{{ campaign.author or '' }}</td>
+                            <td class="camp-meta">{{ campaign.description or '' }}</td>
+                            <td class="camp-actions">
+                                <div class="actions-cell">
+                                    <a class="btn btn-primary btn-sm" href="/map/{{ campaign.id }}">Map</a>
+                                    <a class="btn btn-ghost btn-sm" href="/campaign/{{ campaign.id }}/download?format=json">JSON</a>
+                                    <a class="btn btn-ghost btn-sm" href="/campaign/{{ campaign.id }}/download?format=csv">CSV</a>
+                                    {% if not campaign.end %}
+                                    <form action="/campaign/{{ campaign.id }}/stop" method="post" style="margin:0;">
+                                        <button type="submit" class="btn btn-danger btn-sm">Stop</button>
+                                    </form>
+                                    {% endif %}
+                                    <a class="btn btn-ghost btn-sm" href="/campaign/edit/{{ campaign.id }}">Edit</a>
+                                    <a class="btn btn-danger btn-sm" href="/campaign/delete/{{ campaign.id }}" onclick="return confirm('Delete this campaign?');">Delete</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="subtitle">No campaigns yet. Click <strong>Start Now</strong> above to begin recording.</p>
+            {% endif %}
+        </section>
+        </div> <!-- /#tab-dashboard -->
+
+        <div id="tab-diagnostics" class="tab-panel">
+            <section class="card">
+                <div class="diag-controls" style="justify-content:space-between;">
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+                        <select id="diag-sensor">
+                            <option value="">All sources</option>
+                        </select>
+                        <label class="diag-check">
+                            <input type="checkbox" id="diag-errors-only">
+                            Errors only
+                        </label>
+                    </div>
+                    <span class="subtitle" id="diag-meta"></span>
+                </div>
+                <div class="diag-terminal" id="diag-terminal">Loading logs...</div>
+            </section>
+
+            <section class="card">
+                <div class="diag-controls" style="justify-content:space-between;">
+                    <span style="font-weight:700;font-size:0.95rem;">Shell Terminal</span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="shell-clear">Clear</button>
+                </div>
+                <div class="diag-terminal" id="shell-output" style="height:32vh;">Ready. Type a command below.</div>
+                <form class="shell-form" id="shell-form">
+                    <span class="shell-prompt" id="shell-cwd">$</span>
+                    <input type="text" class="shell-input" id="shell-input" placeholder="e.g. systemctl status mdau_pub.service" autocomplete="off">
+                    <button type="submit" class="btn btn-primary btn-sm">Run</button>
+                </form>
+            </section>
+        </div>
+
+        <div id="tab-settings" class="tab-panel">
+            <section class="card">
+                <h2>
+                    <span>Map Settings</span>
+                    <span class="subtitle" id="settings-save-status"></span>
+                </h2>
+                <form id="map-settings-form" class="settings-stack">
+                    <div class="settings-two-col">
+                        <div class="settings-group">
+                            <div class="settings-group-title">Default Map Layer</div>
+                            <label for="set-default-layer">Active base layer when opening a campaign map</label>
+                            <select id="set-default-layer" class="settings-select">
+                                <option value="OSM">OSM (Online OpenStreetMap)</option>
+                                <option value="MBTiles">MBTiles (Offline Map — Color)</option>
+                                <option value="MBTilesG">MBTilesG (Offline Map — Grayscale)</option>
+                                <option value="Local">Local (PNG Cache — Color)</option>
+                                <option value="LocalG">LocalG (PNG Cache — Grayscale)</option>
+                            </select>
+                        </div>
+
+                        <div class="settings-group">
+                            <div class="settings-group-title">Track Color Palette</div>
+                            <label for="set-color-palette">Color scale used for concentration tracks &amp; legend</label>
+                            <select id="set-color-palette" class="settings-select">
+                                <option value="default">Default (Green &rarr; Yellow &rarr; Red)</option>
+                                <option value="plasma">Plasma (Purple &rarr; Pink &rarr; Yellow)</option>
+                                <option value="turbo">Turbo (Blue &rarr; Cyan &rarr; Orange &rarr; Red)</option>
+                            </select>
+                            <div id="palette-preview" style="height:8px;border-radius:999px;margin-top:8px;border:1px solid var(--border);"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-group">
+                        <div class="settings-group-title">Offline MBTiles Maps (<code>static/maps/</code>)</div>
+                        <div class="subtitle" style="margin-bottom:8px;">
+                            Drop <code>.mbtiles</code> files into <code>mda-server/static/maps/</code>, select the active map below, and set Default Map Layer to <code>MBTiles</code> or <code>MBTilesG</code>.
+                        </div>
+                        <div id="mbtiles-list" class="settings-stack" style="gap:8px;">
+                            <div class="subtitle">Loading offline maps...</div>
+                        </div>
+                    </div>
+
+                    <div class="settings-actions">
+                        <div class="actions-cell">
+                            <button type="submit" class="btn btn-primary">Save Map Settings</button>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            <section class="card">
+                <h2>Additional Settings</h2>
+                <p class="subtitle" style="margin:0;">Device configuration (<code>devices.json</code>) and concentration alert thresholds will be added here.</p>
+            </section>
+        </div>
     </div>
-  {% endfor %}
+
+    <script>
+        const DEVICES_CONFIG = {{ devices_config | tojson }};
+        const SENSOR_THRESHOLDS = {};
+        for (const [key, cfg] of Object.entries(DEVICES_CONFIG)) {
+            SENSOR_THRESHOLDS[key] = {
+                intervalMs: Math.round((cfg.interval || 1.0) * 1000),
+                staleAfter: cfg.stale_after ?? 15,
+                offlineAfter: cfg.offline_after ?? 120,
+            };
+        }
+        const IDLE_POLL_MS = 5000;
+
+        const INSTRUMENTS = Object.entries(DEVICES_CONFIG)
+            .filter(([key, cfg]) => cfg.enabled && Array.isArray(cfg.species) && cfg.species.length > 0)
+            .map(([key, cfg]) => ({
+                name: cfg.name || key,
+                sensor: key,
+                subtitle: cfg.subtitle || key,
+                species: cfg.species,
+            }));
+        const GPS_ENABLED = Boolean(DEVICES_CONFIG.GPS && DEVICES_CONFIG.GPS.enabled);
+        const WIND_ENABLED = Boolean(DEVICES_CONFIG.Wind && DEVICES_CONFIG.Wind.enabled);
+
+        function resolveStatus(sensor, logEntry, dataAgeSeconds) {
+            const { staleAfter, offlineAfter } = SENSOR_THRESHOLDS[sensor] || { staleAfter: 15, offlineAfter: 120 };
+            const logAge = logEntry ? logEntry.age_seconds : null;
+            const hasLiveData = dataAgeSeconds !== null && dataAgeSeconds !== undefined && dataAgeSeconds <= staleAfter;
+            const hasStaleData = dataAgeSeconds !== null && dataAgeSeconds !== undefined && dataAgeSeconds > staleAfter && dataAgeSeconds <= offlineAfter;
+            const hasRecentData = hasLiveData || hasStaleData;
+            const hasRecentLog = logAge !== null && logAge !== undefined && logAge <= offlineAfter;
+
+            if (!hasRecentData && !hasRecentLog) {
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false, showData: false };
+            }
+            if (!logEntry || !logEntry.description) {
+                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok', active: true, showData: true };
+                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn', active: true, showData: true };
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false, showData: false };
+            }
+
+            const desc = logEntry.description;
+            if (desc === 'Unconnected' || desc === 'Disconnected') {
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false, showData: false };
+            }
+            if (desc.startsWith('ERROR')) {
+                return { text: desc, dotClass: 'offline', lineClass: 'err', active: true, showData: false };
+            }
+            if (desc === 'OK') {
+                if (hasLiveData) return { text: 'OK', dotClass: 'live', lineClass: 'ok', active: true, showData: true };
+                if (hasStaleData) return { text: 'Waiting for new data...', dotClass: 'stale', lineClass: 'warn', active: true, showData: true };
+                return { text: 'Disconnected', dotClass: 'offline', lineClass: 'err', active: false, showData: false };
+            }
+            return { text: desc, dotClass: 'stale', lineClass: 'warn', active: true, showData: hasRecentData };
+        }
+
+        function escapeHtml(str) {
+            return String(str ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function formatAge(ageSeconds) {
+            if (ageSeconds === null || ageSeconds === undefined) return 'No data';
+            if (ageSeconds < 2) return 'Just now';
+            if (ageSeconds < 60) return `${Math.round(ageSeconds)}s ago`;
+            if (ageSeconds < 3600) return `${Math.round(ageSeconds / 60)}m ago`;
+            return `${Math.round(ageSeconds / 3600)}h ago`;
+        }
+
+        function formatVal(val) {
+            if (val === null || val === undefined || !Number.isFinite(val)) return '--';
+            return Math.abs(val) >= 100 ? val.toFixed(1) : val.toFixed(2);
+        }
+
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (el && el.textContent !== value) el.textContent = value;
+        }
+
+        function setClass(id, value) {
+            const el = document.getElementById(id);
+            if (el && el.className !== value) el.className = value;
+        }
+
+        function buildTelemetryCards() {
+            const grid = document.getElementById('telemetry-grid');
+            const cards = [];
+
+            for (const inst of INSTRUMENTS) {
+                const channelsHtml = inst.species.map(sp => {
+                    const safeSp = escapeHtml(sp);
+                    return `
+                    <div class="channel-item">
+                        <div class="channel-label">${safeSp}</div>
+                        <div class="sensor-val"><span id="val-${safeSp}">--</span><span class="sensor-unit" id="unit-${safeSp}"></span></div>
+                    </div>
+                `;
+                }).join('');
+
+                const safeSensor = escapeHtml(inst.sensor);
+                cards.push(`
+                    <div class="instrument-card">
+                        <div class="instrument-header">
+                            <div>
+                                <div class="instrument-title">${escapeHtml(inst.name)}</div>
+                                <div class="instrument-sub">${escapeHtml(inst.subtitle)}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="sensor-meta" id="age-${safeSensor}">No data</span>
+                                <span class="dot" id="dot-${safeSensor}"></span>
+                            </div>
+                        </div>
+                        <div class="channels-grid">${channelsHtml}</div>
+                        <div class="status-line" id="status-${safeSensor}">Status: Unconnected</div>
+                    </div>
+                `);
+            }
+
+            if (GPS_ENABLED) {
+                cards.push(`
+                    <div class="instrument-card">
+                        <div class="instrument-header">
+                            <div>
+                                <div class="instrument-title">${escapeHtml(DEVICES_CONFIG.GPS.name || 'GPS Receiver')}</div>
+                                <div class="instrument-sub">${escapeHtml(DEVICES_CONFIG.GPS.subtitle || 'Position & Speed (NMEA)')}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="sensor-meta" id="age-GPS">No data</span>
+                                <span class="dot" id="dot-GPS"></span>
+                            </div>
+                        </div>
+                        <div class="channels-grid">
+                            <div class="channel-item">
+                                <div class="channel-label">Coordinates</div>
+                                <div class="sensor-val" style="font-size:0.95rem;" id="gps-coords">No fix</div>
+                            </div>
+                            <div class="channel-item">
+                                <div class="channel-label">Speed / Hdg</div>
+                                <div class="sensor-val" style="font-size:0.95rem;" id="gps-speed">--</div>
+                            </div>
+                        </div>
+                        <div class="status-line" id="status-GPS">Status: Unconnected</div>
+                    </div>
+                `);
+            }
+
+            if (WIND_ENABLED) {
+                cards.push(`
+                    <div class="instrument-card">
+                        <div class="instrument-header">
+                            <div>
+                                <div class="instrument-title">${escapeHtml(DEVICES_CONFIG.Wind.name || 'Lufft Wind Sensor')}</div>
+                                <div class="instrument-sub">${escapeHtml(DEVICES_CONFIG.Wind.subtitle || 'Wind Speed & Direction (UMB)')}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="sensor-meta" id="age-Wind">No data</span>
+                                <span class="dot" id="dot-Wind"></span>
+                            </div>
+                        </div>
+                        <div class="channels-grid">
+                            <div class="channel-item">
+                                <div class="channel-label">Speed</div>
+                                <div class="sensor-val"><span id="wind-speed">--</span><span class="sensor-unit">m/s</span></div>
+                            </div>
+                            <div class="channel-item">
+                                <div class="channel-label">Direction</div>
+                                <div class="sensor-val"><span id="wind-dir">--</span><span class="sensor-unit">&deg;</span></div>
+                            </div>
+                        </div>
+                        <div class="status-line" id="status-Wind">Status: Unconnected</div>
+                    </div>
+                `);
+            }
+
+            grid.innerHTML = cards.join('');
+        }
+
+        function applySensorStatus(sensor, logEntry, ageSeconds) {
+            const st = resolveStatus(sensor, logEntry, ageSeconds);
+            setText(`age-${sensor}`, st.active ? formatAge(ageSeconds) : 'No data');
+            setClass(`dot-${sensor}`, `dot ${st.dotClass}`.trim());
+            setText(`status-${sensor}`, `Status: ${st.text}`);
+            setClass(`status-${sensor}`, `status-line ${st.lineClass}`.trim());
+            return {
+                active: st.active,
+                showData: st.showData,
+                dotClass: st.dotClass,
+                intervalMs: st.active ? (SENSOR_THRESHOLDS[sensor]?.intervalMs || 1500) : null,
+            };
+        }
+
+        function updateTelemetry(data) {
+            const gas = data.gas || {};
+            const logs = data.logs || {};
+            let fastestActiveMs = null;
+
+            for (const inst of INSTRUMENTS) {
+                const ages = [];
+                for (const sp of inst.species) {
+                    const entry = gas[sp];
+                    if (entry) {
+                        ages.push(entry.age_seconds);
+                    }
+                }
+                const minAge = ages.length ? Math.min(...ages) : null;
+                const { showData, intervalMs: ms } = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
+                for (const sp of inst.species) {
+                    const entry = showData ? gas[sp] : null;
+                    if (entry) {
+                        setText(`val-${sp}`, formatVal(entry.concentration));
+                        setText(`unit-${sp}`, entry.unit || '');
+                    } else {
+                        setText(`val-${sp}`, '--');
+                        setText(`unit-${sp}`, '');
+                    }
+                }
+                if (ms !== null && (fastestActiveMs === null || ms < fastestActiveMs)) {
+                    fastestActiveMs = ms;
+                }
+            }
+
+            if (GPS_ENABLED) {
+                const loc = data.location;
+                const locAge = loc ? loc.age_seconds : null;
+                const { showData, dotClass, intervalMs: gpsMs } = applySensorStatus('GPS', logs['GPS'], locAge);
+                const showLoc = showData && loc;
+                const hasCoords = showLoc && Number.isFinite(loc.latitude) && Number.isFinite(loc.longitude);
+                const hasSpeedHdg = showLoc && Number.isFinite(loc.speed) && Number.isFinite(loc.heading);
+                setText('gps-coords', hasCoords ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'No fix');
+                setText('gps-speed', hasSpeedHdg ? `${(loc.speed * 3.6).toFixed(1)} km/h \u00b7 ${loc.heading.toFixed(0)}\u00b0` : '--');
+                gpsHasLiveFix = dotClass === 'live';
+                if (gpsMs !== null && (fastestActiveMs === null || gpsMs < fastestActiveMs)) {
+                    fastestActiveMs = gpsMs;
+                }
+            } else {
+                gpsHasLiveFix = false;
+            }
+            const noGpsWarn = document.getElementById('no-gps-warning');
+            if (noGpsWarn) {
+                noGpsWarn.style.display = gpsHasLiveFix ? 'none' : 'inline-block';
+            }
+
+            if (WIND_ENABLED) {
+                const wind = data.wind;
+                const windAge = wind ? wind.age_seconds : null;
+                const { showData, intervalMs: windMs } = applySensorStatus('Wind', logs['Wind'], windAge);
+                const showWind = showData && wind;
+                setText('wind-speed', (showWind && Number.isFinite(wind.speed)) ? wind.speed.toFixed(1) : '--');
+                setText('wind-dir', (showWind && Number.isFinite(wind.heading)) ? wind.heading.toFixed(0) : '--');
+                if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
+                    fastestActiveMs = windMs;
+                }
+            }
+
+            // Cap slow-only mode at 3s so status transitions remain snappy
+            return fastestActiveMs !== null ? Math.min(fastestActiveMs, 3000) : IDLE_POLL_MS;
+        }
+
+        let pollTimer = null;
+        let liveSource = null;
+        let sseFailCount = 0;
+        let gpsHasLiveFix = false;
+
+        function stopLiveStream() {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+            if (liveSource) {
+                liveSource.close();
+                liveSource = null;
+            }
+        }
+
+        function startLiveStream() {
+            if (document.hidden) {
+                stopLiveStream();
+                return;
+            }
+            if (typeof EventSource === 'undefined') {
+                pollLive();
+                return;
+            }
+            stopLiveStream();
+            const dot = document.getElementById('poll-dot');
+            const status = document.getElementById('poll-status');
+            const updated = document.getElementById('last-updated');
+
+            liveSource = new EventSource('/api/live/stream');
+            liveSource.onopen = () => {
+                sseFailCount = 0;
+                dot.className = 'dot live';
+                status.textContent = 'Server Online (Live)';
+            };
+            liveSource.onmessage = (ev) => {
+                try {
+                    const data = JSON.parse(ev.data);
+                    sseFailCount = 0;
+                    updateTelemetry(data);
+                    dot.className = 'dot live';
+                    status.textContent = 'Server Online (Live)';
+                    updated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour12: false })}`;
+                } catch (e) {}
+            };
+            liveSource.onerror = () => {
+                sseFailCount += 1;
+                dot.className = 'dot offline';
+                status.textContent = 'Reconnecting...';
+                if (sseFailCount >= 3) {
+                    stopLiveStream();
+                    pollLive();
+                }
+            };
+        }
+
+        document.getElementById('start-campaign-form')?.addEventListener('submit', (e) => {
+            if (!gpsHasLiveFix) {
+                const ok = confirm(
+                    'Warning: No live GPS fix.\n' +
+                    'Measurements will use local system time and will not have GPS coordinates until a fix is acquired.\n\n' +
+                    'Start campaign anyway?'
+                );
+                if (!ok) {
+                    e.preventDefault();
+                }
+            }
+        });
+
+        async function pollLive() {
+            if (document.hidden) return;
+            const dot = document.getElementById('poll-dot');
+            const status = document.getElementById('poll-status');
+            const updated = document.getElementById('last-updated');
+            let nextMs = IDLE_POLL_MS;
+
+            try {
+                const resp = await fetch('/api/live');
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                nextMs = updateTelemetry(data);
+                dot.className = 'dot live';
+                status.textContent = 'Server Online';
+                updated.textContent = `Updated ${new Date().toLocaleTimeString([], { hour12: false })}`;
+            } catch (err) {
+                dot.className = 'dot offline';
+                status.textContent = 'Server Unreachable';
+            } finally {
+                clearTimeout(pollTimer);
+                if (!document.hidden && !liveSource) {
+                    pollTimer = setTimeout(pollLive, nextMs);
+                }
+            }
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopLiveStream();
+            } else {
+                startLiveStream();
+                if (activeTab === 'diagnostics') {
+                    clearTimeout(diagTimer);
+                    pollDiagnostics();
+                }
+            }
+        });
+
+        window.addEventListener('beforeunload', stopLiveStream);
+
+        // Tabs & Diagnostics polling
+        let activeTab = 'dashboard';
+        let diagTimer = null;
+
+        function classifyLogMsg(desc) {
+            const lower = (desc || '').toLowerCase();
+            if (lower.includes('error') || lower.includes('fail') || lower.includes('timeout') || lower.includes('exception')) {
+                return 'log-msg-err';
+            }
+            if (lower.includes('warm') || lower.includes('waiting') || lower.includes('disconnected') || lower.includes('unconnected')) {
+                return 'log-msg-warn';
+            }
+            if (desc === 'OK') return 'log-msg-ok';
+            return '';
+        }
+
+        function formatLogTime(isoStr) {
+            const d = new Date(isoStr);
+            if (Number.isNaN(d.getTime())) return isoStr;
+            return d.toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false
+            });
+        }
+
+        async function pollDiagnostics() {
+            if (document.hidden || activeTab !== 'diagnostics') return;
+            const sensor = document.getElementById('diag-sensor').value;
+            const errorsOnly = document.getElementById('diag-errors-only').checked ? '1' : '0';
+            const params = new URLSearchParams({ limit: '150', errors_only: errorsOnly });
+            if (sensor) params.set('sensor', sensor);
+
+            try {
+                const resp = await fetch(`/api/logs?${params.toString()}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+
+                const sel = document.getElementById('diag-sensor');
+                const current = sel.value;
+                const opts = ['<option value="">All sources</option>']
+                    .concat((data.sensors || []).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`));
+                sel.innerHTML = opts.join('');
+                if ([...sel.options].some(o => o.value === current)) sel.value = current;
+
+                document.getElementById('diag-meta').textContent =
+                    data.db_size_mb !== null ? `DB: ${data.db_size_mb} MB` : '';
+
+                const term = document.getElementById('diag-terminal');
+                const atBottom = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
+                const ordered = [...(data.logs || [])].reverse();
+                if (!ordered.length) {
+                    term.textContent = '(no matching log entries)';
+                } else {
+                    term.innerHTML = ordered.map(lg => {
+                        const ts = escapeHtml(formatLogTime(lg.datetime));
+                        const src = escapeHtml(lg.sensor.padEnd(10, ' '));
+                        const msg = escapeHtml(lg.description);
+                        const cls = classifyLogMsg(lg.description);
+                        return `<div class="diag-line"><span class="diag-ts">${ts}</span> <span class="diag-src">[${src}]</span> <span class="${cls}">${msg}</span></div>`;
+                    }).join('');
+                    if (atBottom) term.scrollTop = term.scrollHeight;
+                }
+            } catch (err) {
+                document.getElementById('diag-terminal').textContent = '[error] failed to fetch /api/logs';
+            } finally {
+                clearTimeout(diagTimer);
+                if (!document.hidden && activeTab === 'diagnostics') {
+                    diagTimer = setTimeout(pollDiagnostics, 3000);
+                }
+            }
+        }
+
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeTab = btn.dataset.tab;
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${activeTab}`));
+                if (activeTab === 'diagnostics') {
+                    clearTimeout(diagTimer);
+                    pollDiagnostics();
+                } else {
+                    clearTimeout(diagTimer);
+                }
+                if (activeTab === 'settings') {
+                    loadSettingsUI();
+                }
+            });
+        });
+
+        // Settings tab logic
+        const INITIAL_SETTINGS = {{ settings | tojson }};
+
+        const PALETTE_GRADIENTS = {
+            default: 'linear-gradient(90deg, #19994E, #68BB68, #A7D866, #D9EF8A, #FFFEBA, #FFDF88, #FDAE61, #F46D43, #D82F2A)',
+            plasma: 'linear-gradient(90deg, #0D0887, #46039F, #7201A8, #9C179E, #BD3786, #D8576B, #ED7953, #FB9F3A, #F0F921)',
+            turbo: 'linear-gradient(90deg, #30123B, #4662D7, #36AAF9, #1AE4B6, #72FE5E, #C8EF34, #FABA39, #F66B19, #7A0403)',
+        };
+
+        function updatePalettePreview() {
+            const sel = document.getElementById('set-color-palette');
+            const bar = document.getElementById('palette-preview');
+            if (sel && bar) bar.style.background = PALETTE_GRADIENTS[sel.value] || PALETTE_GRADIENTS.default;
+        }
+
+        function populateSettingsForm(cfg) {
+            const m = (cfg && cfg.map) ? cfg.map : {};
+            document.getElementById('set-default-layer').value = m.default_layer || 'OSM';
+            const palEl = document.getElementById('set-color-palette');
+            if (palEl) palEl.value = m.color_palette || 'default';
+            updatePalettePreview();
+        }
+
+        function renderMbtilesList(data) {
+            const listEl = document.getElementById('mbtiles-list');
+            if (!listEl) return;
+            const maps = data.maps || [];
+            const active = data.active_mbtiles || '';
+            if (!maps.length) {
+                listEl.innerHTML = '<div class="subtitle">No <code>.mbtiles</code> files found in <code>static/maps/</code>.</div>';
+                return;
+            }
+            listEl.innerHTML = maps.map((item, idx) => {
+                const isChecked = (active ? item.filename === active : idx === 0);
+                const fname = escapeHtml(item.filename);
+                const fmt = escapeHtml((item.format || 'pbf').toUpperCase());
+                const desc = escapeHtml(item.description || '');
+                const metaLine = `${fmt} · ${item.size_mb} MB · ${item.tile_count.toLocaleString()} tiles · z${item.minzoom}&ndash;z${item.maxzoom}`;
+                return `
+                    <div class="layer-card" style="flex-direction:column;gap:6px;cursor:default;">
+                        <label style="display:flex;align-items:center;gap:8px;margin:0;cursor:pointer;width:100%;">
+                            <input type="radio" name="active-mbtiles" class="set-active-mbtiles" value="${fname}" ${isChecked ? 'checked' : ''}>
+                            <div style="flex:1;min-width:0;">
+                                <div class="layer-card-title" style="word-break:break-all;">${fname}</div>
+                                <div class="layer-card-meta">${metaLine}</div>
+                            </div>
+                        </label>
+                        <input type="text" class="set-mbtiles-desc" data-filename="${fname}" value="${desc}" placeholder="Optional description (e.g. Munich area, Tilemaker basic)..." style="background:var(--bg);font-size:0.82rem;padding:6px 9px;">
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadSettingsUI() {
+            try {
+                const [sResp, mResp] = await Promise.all([
+                    fetch('/api/settings'),
+                    fetch('/api/offline-maps'),
+                ]);
+                if (sResp.ok) populateSettingsForm(await sResp.json());
+                if (mResp.ok) renderMbtilesList(await mResp.json());
+            } catch (e) {}
+        }
+
+        populateSettingsForm(INITIAL_SETTINGS);
+        document.getElementById('set-color-palette')?.addEventListener('change', updatePalettePreview);
+
+        function collectMapSettingsPayload() {
+            const activeMbEl = document.querySelector('.set-active-mbtiles:checked');
+            const mbtilesDescriptions = {};
+            document.querySelectorAll('.set-mbtiles-desc').forEach(inp => {
+                const fn = inp.dataset.filename;
+                if (fn) mbtilesDescriptions[fn] = inp.value.trim();
+            });
+            return {
+                map: {
+                    default_layer: document.getElementById('set-default-layer').value,
+                    color_palette: document.getElementById('set-color-palette')?.value || 'default',
+                    active_mbtiles: activeMbEl ? activeMbEl.value : '',
+                    mbtiles_descriptions: mbtilesDescriptions,
+                }
+            };
+        }
+
+        document.getElementById('map-settings-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const statusEl = document.getElementById('settings-save-status');
+            statusEl.textContent = 'Saving...';
+            const payload = collectMapSettingsPayload();
+            try {
+                const resp = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                statusEl.textContent = 'Saved!';
+                setTimeout(() => { statusEl.textContent = ''; }, 3000);
+            } catch (err) {
+                statusEl.textContent = 'Failed to save';
+            }
+        });
+
+        ['diag-sensor', 'diag-errors-only'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', () => {
+                clearTimeout(diagTimer);
+                pollDiagnostics();
+            });
+        });
+
+        // Interactive shell terminal
+        const shellHistory = [];
+        let shellHistIdx = -1;
+        const shellOut = document.getElementById('shell-output');
+        const shellInput = document.getElementById('shell-input');
+        const shellCwd = document.getElementById('shell-cwd');
+
+        function appendShell(html) {
+            if (shellOut.textContent === 'Ready. Type a command below.') {
+                shellOut.innerHTML = '';
+            }
+            shellOut.insertAdjacentHTML('beforeend', html);
+            shellOut.scrollTop = shellOut.scrollHeight;
+        }
+
+        document.getElementById('shell-clear')?.addEventListener('click', () => {
+            shellOut.textContent = '';
+        });
+
+        shellInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' && shellHistory.length) {
+                e.preventDefault();
+                shellHistIdx = shellHistIdx <= 0 ? shellHistory.length - 1 : shellHistIdx - 1;
+                shellInput.value = shellHistory[shellHistIdx];
+            } else if (e.key === 'ArrowDown' && shellHistory.length) {
+                e.preventDefault();
+                if (shellHistIdx >= shellHistory.length - 1) {
+                    shellHistIdx = shellHistory.length;
+                    shellInput.value = '';
+                } else {
+                    shellHistIdx += 1;
+                    shellInput.value = shellHistory[shellHistIdx];
+                }
+            }
+        });
+
+        document.getElementById('shell-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const cmd = shellInput.value.trim();
+            if (!cmd) return;
+            shellHistory.push(cmd);
+            shellHistIdx = shellHistory.length;
+            shellInput.value = '';
+            appendShell(`<div class="diag-line"><span class="diag-src">${escapeHtml(shellCwd.textContent)}</span> ${escapeHtml(cmd)}</div>`);
+            try {
+                const resp = await fetch('/api/terminal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: cmd }),
+                });
+                const res = await resp.json();
+                if (res.cwd) {
+                    const shortCwd = res.cwd.split('/').slice(-2).join('/') || '/';
+                    shellCwd.textContent = `${shortCwd}$`;
+                }
+                if (res.stdout) appendShell(`<div class="diag-line">${escapeHtml(res.stdout)}</div>`);
+                if (res.stderr) appendShell(`<div class="diag-line log-msg-err">${escapeHtml(res.stderr)}</div>`);
+                if (res.exit_code !== 0) {
+                    appendShell(`<div class="diag-line log-msg-warn">[exit ${res.exit_code}]</div>`);
+                }
+            } catch (err) {
+                appendShell(`<div class="diag-line log-msg-err">[request failed]</div>`);
+            }
+        });
+
+        buildTelemetryCards();
+        startLiveStream();
+    </script>
 </body>
 </html>

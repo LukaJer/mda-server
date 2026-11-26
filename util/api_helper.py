@@ -7,7 +7,7 @@ from models.base_model import db
 
 
 class Request:
-    DEFAULT_LIMIT = 200
+    DEFAULT_LIMIT = 2000
     DEFAULT_GAS_TYPE = "NO"
 
     def __init__(self, args: MultiDict[str, str]):
@@ -24,7 +24,7 @@ class Request:
     def get_datetime(datetime_iso: str) -> datetime | None:
         if datetime_iso is None:
             return None
-        return datetime.strptime(datetime_iso, '%Y-%m-%dT%H:%M:%S')
+        return ApiHelper.parse_iso_datetime(datetime_iso)
 
     @staticmethod
     def get_bool(val: str, compare: str) -> bool:
@@ -49,7 +49,23 @@ class ApiHelper:
 
     @staticmethod
     def get_datetime_if_set(request: str) -> Optional[datetime]:
+        if not request or not request.strip():
+            return None
+        val = request.strip()
+        for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S"):
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                continue
         try:
-            return datetime.fromisoformat(request)
+            return datetime.fromisoformat(val)
         except ValueError:
             return None
+
+    @staticmethod
+    def parse_iso_datetime(value: str) -> datetime:
+        """Parse an ISO-8601 datetime string and normalize aware timestamps to naive local time."""
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt

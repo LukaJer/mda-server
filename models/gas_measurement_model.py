@@ -4,7 +4,7 @@ from sqlalchemy import DateTime, Float, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base_model import db
-from util.api_helper import Request
+from util.api_helper import ApiHelper, Request
 
 
 class GasMeasurement(db.Model):
@@ -17,7 +17,7 @@ class GasMeasurement(db.Model):
     @staticmethod
     def create_from_json(json: dict) -> "GasMeasurement":
         return GasMeasurement(
-                datetime=datetime.fromisoformat(json["datetime"]),
+                datetime=ApiHelper.parse_iso_datetime(json["datetime"]),
                 type=json["type"],
                 concentration=float(json["concentration"]),
                 unit=json["unit"]

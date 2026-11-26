@@ -1,8 +1,11 @@
 import './livemap.css';
 import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 import * as L from 'leaflet';
 import 'leaflet-rotatedmarker';
+import maplibreGL from '@maplibre/maplibre-gl-leaflet';
+import { buildVectorStyle, MBTilesInfo } from './mbtiles-style';
 import { GasMeasurementPlotter } from './gas-measurement-plotter';
 import { WindMeasurementPlotter } from './wind-measurement-plotter';
 import { FocusControl } from './focus-control';
@@ -15,6 +18,14 @@ import { getUrlParameter, is_screenshot_mode, extractCampaignIdFromCurrentUrl, e
 import { getBaseConcentration } from './campaign-statistics';
 
 declare var campaign: Campaign;
+declare var availableSpecies: string[] | undefined;
+declare var mapSettings: {
+    default_layer?: string;
+    color_palette?: string;
+    active_mbtiles_info?: MBTilesInfo | null;
+    has_local_png?: boolean;
+    has_local_gray_png?: boolean;
+} | undefined;
 
 
 type RangeMode =
@@ -72,14 +83,59 @@ async function main() {
     map.attributionControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors');
 
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19});
-    const osm_local = L.tileLayer('/static/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 19});
-    const osm_local_grayscale = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
 
-    const tile_layers = {
+    const tile_layers: { [key: string]: L.Layer } = {
         "OSM": osm,
-        "Local": osm_local,
-        "LocalG": osm_local_grayscale
     };
+    if (typeof mapSettings !== 'undefined' && mapSettings?.has_local_png) {
+        tile_layers["Local"] = L.tileLayer('/static/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 19});
+    }
+    if (typeof mapSettings !== 'undefined' && mapSettings?.has_local_gray_png) {
+        tile_layers["LocalG"] = L.tileLayer('/static/tiles/osm_grayscale/{z}/{x}/{y}.png', {maxZoom: 19});
+    }
+    const mbtilesInfo = typeof mapSettings !== 'undefined' ? mapSettings?.active_mbtiles_info : null;
+    if (mbtilesInfo && mbtilesInfo.filename) {
+        const fmt = (mbtilesInfo.format || 'pbf').toLowerCase();
+        const origin = window.location.origin;
+        if (fmt === 'pbf' || fmt === 'mvt') {
+            try {
+                const tileUrl = `${origin}/tiles/mbtiles/${encodeURIComponent(mbtilesInfo.filename)}/{z}/{x}/{y}.pbf`;
+                const minz = mbtilesInfo.minzoom ?? 0;
+                const maxz = mbtilesInfo.maxzoom ?? 14;
+                const colorGl = maplibreGL({
+                    style: buildVectorStyle(tileUrl, minz, maxz, false),
+                    interactive: false,
+                });
+                const grayGl = maplibreGL({
+                    style: buildVectorStyle(tileUrl, minz, maxz, true),
+                    interactive: false,
+                });
+                colorGl.on('add', () => {
+                    colorGl.getMaplibreMap()?.on('error', (e: any) => console.error('MBTiles error:', e?.error || e));
+                });
+                grayGl.on('add', () => {
+                    grayGl.getMaplibreMap()?.on('error', (e: any) => console.error('MBTilesG error:', e?.error || e));
+                });
+                tile_layers["MBTiles"] = colorGl;
+                tile_layers["MBTilesG"] = grayGl;
+            } catch (err) {
+                console.error('Failed to initialize MBTiles vector layers:', err);
+            }
+        } else {
+            const tileUrl = `/tiles/mbtiles/${encodeURIComponent(mbtilesInfo.filename)}/{z}/{x}/{y}.${fmt}`;
+            const rasterLayer = L.tileLayer(tileUrl, {
+                minZoom: mbtilesInfo.minzoom ?? 0,
+                maxZoom: 19,
+                maxNativeZoom: mbtilesInfo.maxzoom ?? 18,
+            });
+            tile_layers["MBTiles"] = rasterLayer;
+            tile_layers["MBTilesG"] = rasterLayer;
+        }
+    }
+    const defaultLayerKey = (typeof mapSettings !== 'undefined' && mapSettings?.default_layer && tile_layers[mapSettings.default_layer])
+        ? mapSettings.default_layer
+        : (tile_layers["MBTiles"] ? "MBTiles" : "OSM");
+    tile_layers[defaultLayerKey].addTo(map);
 
 
     var NavigationIcon = L.icon({
@@ -101,65 +157,136 @@ async function main() {
     var marker = L.marker([48.112167000, 11.583705000], {icon: NavigationIcon, rotationAngle: 0});
     var live_marker = L.marker([48.112167000, 11.583705000], {icon: LiveNavigationIcon, rotationAngle: 0});
 
-    const initial_gas = INITIAL_GAS;
+    const selector = document.getElementById('gas-selector') as HTMLSelectElement | null;
+    const initial_gas = (selector && selector.value) ? selector.value : INITIAL_GAS;
     const gas_slider = new Slider('gas-slider', map);
     
     const gas_display = new NumericDisplay('gas-concentration-display', initial_gas, unitFor(initial_gas));
 
     const campaign_id = extractCampaignIdFromCurrentUrl();
 
-    
-    const gas_layers: { [key: string]: { [key: string]: any } } = {};
-    let first_plotter: GasMeasurementPlotter | null = null;
+    const speciesKeys = (typeof availableSpecies !== 'undefined' && Array.isArray(availableSpecies) && availableSpecies.length > 0)
+        ? availableSpecies.filter(s => s in SPECIES)
+        : Object.keys(SPECIES);
+    const activeSpeciesKeys = speciesKeys.length > 0 ? speciesKeys : Object.keys(SPECIES);
 
-    for (const [name, cfg] of Object.entries(SPECIES)) {
+    const isLive = campaign.end === null;
+    const palette = (typeof mapSettings !== 'undefined' && mapSettings?.color_palette) ? mapSettings.color_palette : 'default';
+    const canvasRenderer = L.canvas({ padding: 0.5 });
+
+    const gas_layers: { [key: string]: { plotter: GasMeasurementPlotter; finished: boolean } } = {};
+    let active_plotter: GasMeasurementPlotter | null = null;
+    let hasFittedInitialBounds = false;
+    let isFocused = isLive;
+
+    async function getOrCreatePlotter(name: string): Promise<GasMeasurementPlotter | null> {
+        if (name in gas_layers) {
+            return gas_layers[name].plotter;
+        }
+        const cfg = SPECIES[name];
+        if (!cfg) {
+            return null;
+        }
+
         let min_value: number;
         let max_value: number;
-
         if (cfg.range.kind === "fixed") {
             min_value = cfg.range.min;
             max_value = cfg.range.max;
         } else {
-            
             min_value = await getBaseConcentration(campaign_id, cfg.range.baselineGas, cfg.range.fallback);
             max_value = min_value + Number(getUrlParameter(cfg.range.spanParam, "100")) * cfg.range.spanScale;
         }
 
+        if (name in gas_layers) {
+            return gas_layers[name].plotter;
+        }
+
         const plotter = new GasMeasurementPlotter(
             map, marker, name, min_value, max_value, cfg.unit,
-            gas_slider, gas_display, campaign.start, campaign.end
+            gas_slider, gas_display, campaign.start, campaign.end, palette, canvasRenderer
         );
-        plotter.startPlotting(1000);
-        gas_layers[name] = { plotter: plotter };
-        if (first_plotter === null) {
-            first_plotter = plotter;
-        }
+        const entry = { plotter, finished: false };
+        plotter.onFinished = () => {
+            entry.finished = true;
+            if (!isLive && !hasFittedInitialBounds && active_plotter === plotter) {
+                hasFittedInitialBounds = true;
+                const bounds = plotter.getBounds();
+                if (bounds && bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [24, 24] });
+                }
+            }
+        };
+        gas_layers[name] = entry;
+        return plotter;
     }
 
     const wind_plotter = new WindMeasurementPlotter(map, campaign.start, campaign.end);
     wind_plotter.startPlotting(1000);
 
-    const focus_control = new FocusControl({ position: 'topleft' }, (focus: boolean) => first_plotter?.setFocus(focus));
+    const start_key = activeSpeciesKeys.includes(initial_gas) ? initial_gas : activeSpeciesKeys[0];
+
+    const focus_control = new FocusControl(
+        { position: 'topleft' },
+        (focus: boolean) => {
+            isFocused = focus;
+            active_plotter?.setFocus(focus);
+        },
+        isLive
+    );
     const wind_control = new WindControl({ position: 'topleft' }, (show: boolean) => wind_plotter.show(show))
 
-    
-    const start_key = (initial_gas in gas_layers) ? initial_gas : Object.keys(gas_layers)[0];
-    gas_layers[start_key].plotter.show(true);
-    gas_slider.updateGasType(start_key, gas_layers[start_key].plotter.measurements);
+    active_plotter = await getOrCreatePlotter(start_key);
+    if (active_plotter) {
+        active_plotter.show(true);
+        if (isFocused) {
+            active_plotter.setFocus(true);
+        }
+        active_plotter.startPlotting(1000);
+        gas_slider.updateGasType(start_key, active_plotter.measurements);
+        if (start_key !== initial_gas) {
+            gas_display.changeGasType(start_key, unitFor(start_key));
+            if (selector && Array.from(selector.options).some(opt => opt.value === start_key)) {
+                selector.value = start_key;
+                selector.dispatchEvent(new Event('change', { bubbles: false }));
+            }
+        }
+    }
 
-
-
-    document.getElementById('gas-selector')?.addEventListener('change', (event) => {
+    let switchSeq = 0;
+    document.getElementById('gas-selector')?.addEventListener('change', async (event) => {
         const target = event.target as HTMLSelectElement;
         const selectedLayerKey = target.value;
+        const seq = ++switchSeq;
 
-        Object.values(gas_layers).forEach(gas => gas.plotter.show(false));
+        if (active_plotter) {
+            active_plotter.stopPlotting();
+            if (active_plotter.focus) {
+                active_plotter.setFocus(false);
+            }
+            active_plotter.show(false);
+            active_plotter = null;
+        }
 
-        if (selectedLayerKey in gas_layers) {
-            gas_layers[selectedLayerKey].plotter.show(true);
-            gas_slider.updateGasType(selectedLayerKey, gas_layers[selectedLayerKey].plotter.measurements)
-            
-            gas_display.changeGasType(selectedLayerKey, unitFor(selectedLayerKey));
+        const nextPlotter = await getOrCreatePlotter(selectedLayerKey);
+        if (seq !== switchSeq || !nextPlotter) {
+            return;
+        }
+
+        active_plotter = nextPlotter;
+        active_plotter.show(true);
+        if (isFocused) {
+            active_plotter.setFocus(true);
+        }
+        gas_slider.updateGasType(selectedLayerKey, active_plotter.measurements);
+        gas_display.changeGasType(selectedLayerKey, unitFor(selectedLayerKey));
+        if (active_plotter.previous_measurement && Number.isFinite(active_plotter.previous_measurement.concentration)) {
+            gas_display.updateValue(active_plotter.previous_measurement.concentration);
+        }
+
+        const entry = gas_layers[selectedLayerKey];
+        if (isLive || !entry.finished) {
+            active_plotter.startPlotting(1000);
         }
     });
 
@@ -169,7 +296,9 @@ async function main() {
 
 
     if (is_screenshot_mode()) {
-        addWindroseToMap(map, campaign);
+        addWindroseToMap(map, campaign).catch((error) => {
+            console.error('Failed to add windrose to map:', error);
+        });
         const show_wind = getUrlParameter("wind", "false");
         if (show_wind == "true") {
             wind_plotter.show(true);
