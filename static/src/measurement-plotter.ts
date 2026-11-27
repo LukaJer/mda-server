@@ -46,11 +46,13 @@ export class MeasurementPlotter {
             this.abortController = ctrl;
 
             try {
-                await this.update(ctrl.signal);
+                const hasMoreBacklog = await this.update(ctrl.signal);
                 if (!this.isPolling || gen !== this.pollGeneration) return;
-                this.onPollSettled?.();
-                // Finished campaigns should fetch all remaining batches immediately without waiting
-                this.currentInterval = this.end_datetime !== null ? 0 : this.baseInterval;
+                if (!hasMoreBacklog) {
+                    this.onPollSettled?.();
+                }
+                // Fetch remaining backlog batches immediately without waiting (both finished and catching-up live campaigns)
+                this.currentInterval = (this.end_datetime !== null || hasMoreBacklog) ? 0 : this.baseInterval;
             } catch (error) {
                 if (!this.isPolling || gen !== this.pollGeneration || (error as any)?.name === 'AbortError') {
                     return;
@@ -89,7 +91,7 @@ export class MeasurementPlotter {
         }
     }
   
-    async update(signal?: AbortSignal): Promise<void> {
+    async update(signal?: AbortSignal): Promise<boolean> {
         const response = await fetch(this.getRequestUrl(), signal ? { signal } : undefined);
         if (!response.ok) {
             throw new Error("No data available.");
@@ -97,9 +99,11 @@ export class MeasurementPlotter {
 
         const data = await response.json();
         if (signal?.aborted) {
-            return;
+            return false;
         }
         this.plotData(data);
+        // Server Request.DEFAULT_LIMIT is 2000 (interpolation may drop a few unlocated points)
+        return Array.isArray(data) && data.length >= 1500;
     }
 
     plotData(data: any[]): void {
@@ -117,8 +121,11 @@ export class MeasurementPlotter {
         if (!new_measurements) {
             throw new Error("No new data available.");
         }
+        this.onBatchPlotted();
         this.onBatch?.(this.measurements.size);
     }
+
+    protected onBatchPlotted(): void {}
 
     drawMeasurement(measurement: any) {
         throw new Error("To be implemented by child!");

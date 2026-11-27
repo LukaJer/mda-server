@@ -697,6 +697,7 @@
             <div id="no-gps-warning" class="badge-warn" style="display:none; margin-bottom:12px; padding:8px 12px; font-size:0.85rem;">
                 &#9888; No GPS fix detected — measurements will use local system time and lack coordinates until GPS is acquired.
             </div>
+            <div id="instruments-warning" class="badge-warn" style="display:none; margin-bottom:12px; padding:8px 12px; border-radius:10px; font-size:0.85rem;"></div>
             <form id="start-campaign-form" action="/campaign/start" method="post">
                 <div class="form-row">
                     <div>
@@ -1087,6 +1088,8 @@
                 active: st.active,
                 showData: st.showData,
                 dotClass: st.dotClass,
+                lineClass: st.lineClass,
+                text: st.text,
                 intervalMs: st.active ? (SENSOR_THRESHOLDS[sensor]?.intervalMs || 1500) : null,
             };
         }
@@ -1095,6 +1098,7 @@
             const gas = data.gas || {};
             const logs = data.logs || {};
             let fastestActiveMs = null;
+            const notReady = [];
 
             for (const inst of INSTRUMENTS) {
                 const ages = [];
@@ -1105,7 +1109,10 @@
                     }
                 }
                 const minAge = ages.length ? Math.min(...ages) : null;
-                const { showData, intervalMs: ms } = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
+                const { showData, lineClass, text, intervalMs: ms } = applySensorStatus(inst.sensor, logs[inst.sensor], minAge);
+                if (lineClass !== 'ok') {
+                    notReady.push({ sensor: inst.sensor, status: text });
+                }
                 for (const sp of inst.species) {
                     const entry = showData ? gas[sp] : null;
                     if (entry) {
@@ -1145,12 +1152,27 @@
             if (WIND_ENABLED) {
                 const wind = data.wind;
                 const windAge = wind ? wind.age_seconds : null;
-                const { showData, intervalMs: windMs } = applySensorStatus('Wind', logs['Wind'], windAge);
+                const { showData, lineClass, text, intervalMs: windMs } = applySensorStatus('Wind', logs['Wind'], windAge);
+                if (lineClass !== 'ok') {
+                    notReady.push({ sensor: 'Wind', status: text });
+                }
                 const showWind = showData && wind;
                 setText('wind-speed', (showWind && Number.isFinite(wind.speed)) ? wind.speed.toFixed(1) : '--');
                 setText('wind-dir', (showWind && Number.isFinite(wind.heading)) ? wind.heading.toFixed(0) : '--');
                 if (windMs !== null && (fastestActiveMs === null || windMs < fastestActiveMs)) {
                     fastestActiveMs = windMs;
+                }
+            }
+
+            instrumentIssues = notReady;
+            const instWarn = document.getElementById('instruments-warning');
+            if (instWarn) {
+                if (instrumentIssues.length > 0) {
+                    const summary = instrumentIssues.map(i => `${i.sensor} (${i.status})`).join(', ');
+                    instWarn.textContent = `\u26A0 Instruments not ready: ${summary} \u2014 measurements from these instruments will be missing or invalid until ready.`;
+                    instWarn.style.display = 'inline-block';
+                } else {
+                    instWarn.style.display = 'none';
                 }
             }
 
@@ -1163,6 +1185,7 @@
         let liveFetchController = null;
         let sseFailCount = 0;
         let gpsHasLiveFix = false;
+        let instrumentIssues = [];
 
         function stopLiveStream() {
             clearTimeout(pollTimer);
@@ -1227,11 +1250,17 @@
         }
 
         document.getElementById('start-campaign-form')?.addEventListener('submit', (e) => {
+            const warnings = [];
             if (!gpsHasLiveFix) {
+                warnings.push('No live GPS fix — measurements will use local system time and will not have GPS coordinates until a fix is acquired.');
+            }
+            if (instrumentIssues.length > 0) {
+                const summary = instrumentIssues.map(i => `${i.sensor} (${i.status})`).join(', ');
+                warnings.push(`Instruments not ready: ${summary}. Measurements from these instruments will be missing or invalid until ready.`);
+            }
+            if (warnings.length > 0) {
                 const ok = confirm(
-                    'Warning: No live GPS fix.\n' +
-                    'Measurements will use local system time and will not have GPS coordinates until a fix is acquired.\n\n' +
-                    'Start campaign anyway?'
+                    'Warning:\n\u2022 ' + warnings.join('\n\u2022 ') + '\n\nStart campaign anyway?'
                 );
                 if (!ok) {
                     e.preventDefault();

@@ -65,15 +65,23 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
     }
 
     drawMeasurement(measurement: any) {
-        if (this.is_visible) {
-            this.updateMarkerPosition(measurement);
-        }
         this.addMeasurementToLayer(measurement);
-        if (this.is_visible && this.slider.gas_name == this.gas_name) {
-            this.slider.updateSliderMax();
-        }
-        if (this.is_visible && this.numeric_dispaly.gas_name == this.gas_name) {
-            this.numeric_dispaly.updateValue(measurement.concentration);
+    }
+
+    protected onBatchPlotted(): void {
+        const last = this.previous_measurement;
+        if (!last) return;
+        if (this.is_visible) {
+            this.updateMarkerPosition(last);
+            if (this.slider.gas_name == this.gas_name) {
+                this.slider.updateSliderMax();
+            }
+            if (this.numeric_dispaly.gas_name == this.gas_name) {
+                this.numeric_dispaly.updateValue(last.concentration);
+            }
+            if (this.focus && Number.isFinite(last.latitude) && Number.isFinite(last.longitude)) {
+                this.map.panTo(new L.LatLng(last.latitude, last.longitude));
+            }
         }
     }
 
@@ -131,11 +139,6 @@ export class GasMeasurementPlotter extends MeasurementPlotter {
             this.attachLazyPopup(pointMarker, measurement);
             pointMarker.addTo(this.gas_measurement_layer);
         }
-
-        if (this.focus) {
-            this.map.panTo(new L.LatLng(measurement.latitude, measurement.longitude));
-        }
-
     }
 
     private attachLazyPopup(layer: L.Layer, measurement: any): void {

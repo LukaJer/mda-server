@@ -222,7 +222,7 @@ async function main() {
         );
         const entry = { plotter, finished: false };
         plotter.onBatch = (totalCount: number) => {
-            if (active_plotter === plotter && !isLive && !entry.finished) {
+            if (active_plotter === plotter && !entry.finished) {
                 setTrackLoading(true, `Loading ${name} (${totalCount.toLocaleString()} pts)...`);
             }
         };
